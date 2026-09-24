@@ -111,5 +111,6 @@ Review the installer's fit, size, and health readouts before choosing large mode
 
 Zarzysseus is an independently maintained installer and management toolkit built around Odysseus. For the upstream native Windows setup instructions, see [Odysseus's setup guide](https://github.com/odysseus-dev/odysseus/blob/dev/website/setup.md).
 
-**Enjoying Zarzysseus? 
-A ⭐ on [the project](https://github.com/zarzorr69/zarzyssues) would mean a lot — thank you for supporting it!**
+**Enjoying Zarzysseus?** 
+
+**A ⭐ on [the project](https://github.com/zarzorr69/zarzyssues) would mean a lot — thank you for supporting it!**
