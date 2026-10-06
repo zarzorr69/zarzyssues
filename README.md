@@ -244,7 +244,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 chat-co
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 chat-continuity-fix status
 ```
 
-### Cookbook reliability without a full OS update
+### Cookbook reliability
 
 Cookbook now receives a Zarzysseus reliability bridge instead of requiring the user to abandon Cookbook and run model commands manually. On Linux, the managed Odysseus service prepends a local `data/local/cookbook-bin` shim to `PATH`; Cookbook Hugging Face downloads therefore use a resumable retry wrapper around the same Odysseus-venv `hf` command, with the Zarzysseus Hugging Face cache/timeout policy. On Windows, the managed process receives the equivalent local `hf.cmd` retry shim. These repairs **do not call the full operating-system updater**.
 
