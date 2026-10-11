@@ -4035,6 +4035,638 @@ print(f'    [backup] {backup}')
 PY_DIRECT_TOOL_JSON_PATCH
 }
 
+# Unified skill readiness and consent V9 (embedded, standalone-script compatible).
+skills_v9_helper_path() {
+    printf '%s\n' "$PROJECT_DIR/data/local/zarzysseus_skill_manager_v9.py"
+}
+skills_v9_prepare_helper() {
+    local path
+    path="$(skills_v9_helper_path)"
+    mkdir -p "$(dirname "$path")"
+    cat > "$path" <<'PY_SKILL_MANAGER_V9'
+#!/usr/bin/env python3
+"""Zarzysseus V9 read-only skill audit and narrowly scoped MCP consent store.
+
+Does not execute skills, access the network, import third-party runners, or probe MCP servers.
+"""
+from __future__ import annotations
+import argparse
+import hashlib
+import json
+import os
+import re
+import sys
+from pathlib import Path
+from urllib.parse import urlparse
+
+
+def md_frontmatter(path: Path):
+    text = path.read_text(encoding="utf-8", errors="replace")
+    match = re.match(r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", text, re.S)
+    if not match:
+        return {}, text
+    try:
+        from services.memory.skill_format import parse_frontmatter
+        data, body = parse_frontmatter(text)
+        return data if isinstance(data, dict) else {}, body
+    except Exception:
+        try:
+            import yaml
+            data = yaml.safe_load(match.group(1)) or {}
+            return data if isinstance(data, dict) else {}, text[match.end():]
+        except Exception:
+            return {}, text[match.end():]
+
+
+def declarations(fm):
+    for key in ("mcpServers", "mcpservers", "mcp_servers", "mcp-servers"):
+        if key in fm:
+            value = fm[key]
+            break
+    else:
+        return []
+    if isinstance(value, dict):
+        return [(str(k), v) for k, v in value.items() if isinstance(v, dict)]
+    if isinstance(value, list):
+        return [(str(v.get("name") or v.get("id") or f"server-{i+1}"),
+                 {k: item for k, item in v.items() if k not in ("name", "id")})
+                for i, v in enumerate(value) if isinstance(v, dict)]
+    return []
+
+
+def slug(value):
+    return re.sub(r"[^A-Za-z0-9_]+", "_", value.strip()).strip("_").lower()[:36] or "server"
+
+
+def digest(spec):
+    return hashlib.sha256(json.dumps(spec, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
+
+
+def load_approvals(project):
+    path = project / "data/local/zarzysseus-skill-v9-approvals.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("version") == 1 and isinstance(data.get("approved"), dict):
+            return path, data["approved"]
+    except (ValueError, OSError):
+        pass
+    return path, {}
+
+
+def installed_servers(project):
+    try:
+        from core.database import SessionLocal, McpServer
+        with SessionLocal() as db:
+            return {x.id: {"enabled": bool(x.is_enabled), "transport": x.transport}
+                    for x in db.query(McpServer).filter(McpServer.id.like("skill_%")).all()}
+    except Exception:
+        return None
+
+
+def expected_names(fm):
+    raw = fm.get("requires_toolsets") or []
+    if isinstance(raw, str):
+        return [x.strip().strip('"\'') for x in re.split(r"[,\s]+", raw.strip("[]")) if x.strip()]
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    return []
+
+
+def requirements_status(skill_dir):
+    findings = []
+    req = skill_dir / "requirements.txt"
+    if req.is_file():
+        try:
+            from importlib import metadata
+            missing = []
+            for line in req.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith(("-", ".", "git+", "http:", "https:")):
+                    findings.append("Python requirement uses a non-index/option spec: needs manual verification")
+                    continue
+                name = re.match(r"([\w.-]+)", line)
+                if name:
+                    try:
+                        metadata.version(name.group(1))
+                    except metadata.PackageNotFoundError:
+                        missing.append(name.group(1))
+            if missing:
+                findings.append("missing Python distributions: " + ", ".join(sorted(set(missing))))
+        except Exception:
+            findings.append("Python requirements not verified")
+    if (skill_dir / "package.json").is_file() and not (skill_dir / "node_modules").is_dir():
+        findings.append("npm package manifest present but node_modules missing")
+    for name in ("run.py", "run.sh", "run.ps1", "runner.py", "runner.sh"):
+        if (skill_dir / name).is_file():
+            break
+    return findings
+
+
+def visible_server(spec):
+    transport = str(spec.get("transport") or ("http" if spec.get("url") else "stdio")).lower()
+    if transport in ("http", "sse", "streamable-http", "streamable_http"):
+        target = urlparse(str(spec.get("url") or ""))
+        return f"remote {transport}: {target.scheme}://{target.netloc or 'unconfigured'} (credentials hidden)"
+    command = spec.get("command") or "unspecified"
+    if isinstance(command, list):
+        command = command[0] if command else "unspecified"
+    return f"local stdio executable: {Path(str(command)).name} (arguments and credentials hidden)"
+
+
+def audit(project, only=None):
+    root = project / "data/skills/imported"
+    path, approvals = load_approvals(project)
+    rows = installed_servers(project)
+    collected = []
+    for md in sorted(root.glob("*/SKILL.md")):
+        if only and md.parent.name != only:
+            continue
+        fm, body = md_frontmatter(md)
+        skill_name = str(fm.get("name") or md.parent.name)
+        native = expected_names(fm)
+        runnable = any((md.parent / n).exists() for n in ("run.py", "run.sh", "run.ps1", "runner.py", "runner.sh", "scripts", "bin", "tools"))
+        issues = requirements_status(md.parent)
+        if runnable and not ("bash" in native or "python" in native):
+            issues.append("executable skill has no declared native bash/python toolset")
+        servers = []
+        for name, spec in declarations(fm):
+            key = f"{md.parent.name}/{name}"
+            server_id = ("skill_" + slug(skill_name) + "_" + slug(name))[:90]
+            current = (rows or {}).get(server_id)
+            approved = approvals.get(key) == digest(spec)
+            state = "enabled-config" if current and current["enabled"] else ("disabled-config" if current else "unregistered")
+            if current and current["enabled"] and not approved:
+                state = "legacy-enabled-config"
+            if not approved and state not in ("legacy-enabled-config",):
+                issues.append(f"{name}: explicit MCP approval required")
+            if state in ("unregistered", "disabled-config"):
+                issues.append(f"{name}: {state}")
+            qualified_prefix = f"mcp__{server_id}__"
+            if state in ("enabled-config", "legacy-enabled-config") and not any(x.startswith(qualified_prefix) for x in native):
+                issues.append(f"{name}: no discovered MCP tools bound to requires_toolsets")
+            servers.append({"name": name, "key": key, "spec": spec, "approved": approved,
+                            "state": state, "server_id": server_id})
+        if not fm:
+            issues.append("frontmatter missing or cannot parse")
+        collected.append({"folder": md.parent.name, "name": skill_name, "runnable": runnable,
+                          "native": native, "servers": servers, "issues": issues})
+    return collected, rows is not None
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=["doctor", "plan", "approve", "test"])
+    parser.add_argument("--project", required=True)
+    parser.add_argument("--skill", help="Folder name in data/skills/imported; omit for all")
+    parser.add_argument("--yes", action="store_true", help="Explicit approval from host TUI/CLI")
+    parser.add_argument("--strict", action="store_true", help="Return failure when readiness issues remain")
+    args = parser.parse_args()
+    project = Path(args.project).expanduser().resolve()
+    sys.path.insert(0, str(project))
+    os.chdir(project) if project.is_dir() else None
+    found, db_ok = audit(project, args.skill)
+    if args.skill and not found:
+        print(f"ERROR: imported skill not found: {args.skill}", file=sys.stderr)
+        return 2
+    if args.action == "test":
+        print("PASS: V9 skill manager imports and runs; no MCP server launched")
+        return 0
+    if args.action == "approve":
+        if not args.yes:
+            print("ERROR: explicit approval required (--yes after reviewing plan)", file=sys.stderr)
+            return 2
+        path, approvals = load_approvals(project)
+        changed = 0
+        for skill in found:
+            for server in skill["servers"]:
+                # Approve exact declaration digest only; secrets are not logged.
+                fingerprint = digest(server["spec"])
+                if approvals.get(server["key"]) != fingerprint:
+                    approvals[server["key"]] = fingerprint
+                    changed += 1
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            old_state = json.loads(path.read_text(encoding="utf-8"))
+            legacy = old_state.get("legacy", {}) if isinstance(old_state, dict) else {}
+        except (OSError, ValueError):
+            legacy = {}
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"version": 1, "approved": approvals, "legacy": legacy}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        tmp.replace(path)
+        print(f"V9 approved {changed} changed MCP declaration(s); approval file restricted to current user")
+        return 0
+    print(f"Zarzysseus V9 {'SKILL INSTALL PLAN' if args.action == 'plan' else 'AGENT SKILLS HEALTH'}")
+    print(f"Imported skills: {len(found)} | DB inspection: {'available' if db_ok else 'unavailable'}")
+    unresolved = 0
+    for skill in found:
+        print(f"\n[{skill['folder']}] {skill['name']}")
+        print("  Toolsets:", ", ".join(skill["native"]) if skill["native"] else "none declared")
+        if not skill["servers"]:
+            print("  MCP: none declared; native/skill runner route only")
+        for server in skill["servers"]:
+            print(f"  MCP {server['name']}: {visible_server(server['spec'])}")
+            print(f"    registration={server['state']} exact-declaration-approved={'yes' if server['approved'] else 'no'}")
+        if skill["issues"]:
+            unresolved += 1
+            for issue in skill["issues"]:
+                print(f"  [attention] {issue}")
+        else:
+            print("  [configured] declared dependencies/tool routing appear ready; LIVE model execution NOT tested")
+    print(f"\nSkills needing attention: {unresolved}. This report does not execute skill code or prove live model execution.")
+    return 1 if args.strict and unresolved else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PY_SKILL_MANAGER_V9
+}
+skills_v9_python() {
+    skills_v9_prepare_helper || return 1
+    local py="$VENV_DIR/bin/python"
+    [[ -x "$py" ]] || py="$(command -v python3 || true)"
+    [[ -n "$py" ]] || { echo 'ERROR: Python 3 is required for skills V9.'; return 1; }
+    "$py" "$(skills_v9_helper_path)" "$1" --project "$PROJECT_DIR" "${@:2}"
+}
+skills_v9_doctor() { skills_v9_python doctor "$@"; }
+skills_v9_setup() {
+    local target="${1:-}" root file failures=0 reply=''
+    [[ -d "$PROJECT_DIR/data/skills/imported" ]] || { echo 'No imported skills yet; install a skill first.'; return 0; }
+    if [[ -n "$target" ]]; then
+        skills_v9_python plan --skill "$target" || return 1
+    else
+        skills_v9_python plan || return 1
+    fi
+    echo
+    echo 'V9 setup may install requirements, start declared MCP code for a handshake,'
+    echo 'and register enabled tools. Review installed skill sources and providers first.'
+    if [[ "${ZARZYSSEUS_SKILL_SETUP_APPROVED:-0}" != 1 ]]; then
+        if [[ ! -r /dev/tty ]]; then
+            echo 'Approval required; run interactively or set ZARZYSSEUS_SKILL_SETUP_APPROVED=1 for an explicitly reviewed batch.'
+            return 3
+        fi
+        printf 'Type YES to approve exact MCP declarations and dependency provisioning: '
+        IFS= read -r reply < /dev/tty || return 3
+        [[ "$reply" == YES ]] || { echo 'Skill setup not approved; no new MCP servers provisioned.'; return 3; }
+    fi
+    local -a args=()
+    [[ -n "$target" ]] && args=(--skill "$target")
+    skills_v9_python approve "${args[@]}" --yes || return 1
+    if [[ -n "$target" ]]; then
+        root="$PROJECT_DIR/data/skills/imported/$target"
+        [[ -f "$root/SKILL.md" ]] || { echo 'ERROR: Skill no longer exists.'; return 1; }
+        skills_install_declared_system_packages "$root" || failures=1
+        skills_install_skill_manifests "$root" || failures=1
+    else
+        for file in "$PROJECT_DIR"/data/skills/imported/*/SKILL.md; do
+            [[ -f "$file" ]] || continue
+            root="$(dirname "$file")"
+            skills_install_declared_system_packages "$root" || failures=1
+            skills_install_skill_manifests "$root" || failures=1
+        done
+    fi
+    skills_runtime_repair_all || failures=1
+    skills_v9_python doctor "${args[@]}" --strict || failures=1
+    (( failures == 0 )) || { echo 'WARNING: Some skill setup checks failed; review V9 health output.'; return 1; }
+    echo 'V9 setup finished. A live model tool call is still needed to confirm execution.'
+}
+
+# V10: skill-aware Ollama model advisor (does not edit Odysseus model settings).
+skills_v10_helper_path() { printf '%s\n' "$PROJECT_DIR/data/local/zarzysseus_model_advisor_v10.py"; }
+skills_v10_prepare_helper() {
+    local path; path="$(skills_v10_helper_path)"
+    mkdir -p "$(dirname "$path")"
+    cat > "$path" <<'PY_SKILL_MODEL_V10'
+#!/usr/bin/env python3
+"""Zarzysseus V10 skill-aware model advisor. Python 3.11+, standard library.
+
+Offline catalog + read-only hardware/installed-model discovery. Download and
+per-skill preference changes are explicit. The non-mutating tool probe never
+executes proposed tools. No Odysseus chat/model settings are altered.
+"""
+from __future__ import annotations
+import argparse
+import ctypes
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+# Catalog sizes are approximate Ollama Q4 download sizes in decimal GB, NOT
+# peak RAM or tested Odysseus compatibility guarantees.
+CATALOG = [
+    dict(id='qwen3-vl:2b', gb=1.9, caps=['vision','tools'], quality=2, note='Small vision + tool calling'),
+    dict(id='qwen3-vl:4b', gb=3.3, caps=['vision','tools'], quality=3, note='Mid-size visual agent'),
+    dict(id='qwen3-vl:8b', gb=6.1, caps=['vision','tools'], quality=5, note='Browser screenshots verified in project testing with V8'),
+    dict(id='qwen3-vl:30b', gb=20.0, caps=['vision','tools'], quality=7, note='Larger visual agent; tool flow unverified'),
+    dict(id='qwen2.5-coder:3b', gb=1.9, caps=['code','tools'], quality=2, note='Small coding assistant'),
+    dict(id='qwen2.5-coder:7b', gb=4.7, caps=['code','tools'], quality=4, note='Coding + native tools'),
+    dict(id='qwen2.5-coder:14b', gb=9.0, caps=['code','tools'], quality=6, note='Larger code model'),
+    dict(id='qwen3-coder:30b', gb=19.0, caps=['code','tools'], quality=8, note='Long-context coding model'),
+    dict(id='llama3.1:8b', gb=4.9, caps=['tools'], quality=4, note='General tool calls; browser success depends on runtime'),
+]
+BY_ID = {m['id']: m for m in CATALOG}
+
+
+def safe_local_url():
+    host = os.environ.get('OLLAMA_HOST', '127.0.0.1:11434').strip()
+    host = host.replace('http://','').replace('https://','').rstrip('/')
+    if not re.fullmatch(r'(127\.0\.0\.1|localhost|\[::1\]):\d{2,5}', host):
+        return 'http://127.0.0.1:11434'
+    return 'http://' + host
+
+
+def api(method, endpoint, payload=None, timeout=3):
+    raw = None if payload is None else json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(safe_local_url()+endpoint, raw,
+        {'Content-Type': 'application/json'}, method=method)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read(2_000_000).decode('utf-8'))
+
+
+def installed_inventory():
+    try:
+        obj = api('GET', '/api/tags')
+        return {m.get('name',''): m for m in obj.get('models',[]) if m.get('name')}
+    except (OSError, ValueError, urllib.error.URLError):
+        return {}
+
+
+def installed_match(model_id, inventory):
+    if model_id in inventory: return model_id
+    if model_id.endswith(':latest') and model_id[:-7] in inventory: return model_id[:-7]
+    if model_id + ':latest' in inventory: return model_id+':latest'
+    # qwen3-vl:8b may also be labeled qwen3-vl:latest; do not infer equality
+    return None
+
+
+def host_ram_gb():
+    if sys.platform.startswith('linux'):
+        try:
+            raw = Path('/proc/meminfo').read_text()
+            return int(re.search(r'^MemTotal:\s*(\d+)',raw,re.M).group(1)) / 1024**2
+        except (OSError, AttributeError, ValueError): pass
+    if sys.platform == 'win32':
+        class Memory(ctypes.Structure):
+            _fields_ = [('dwLength',ctypes.c_ulong),('dwMemoryLoad',ctypes.c_ulong),
+                        ('ullTotalPhys',ctypes.c_ulonglong),('ullAvailPhys',ctypes.c_ulonglong),
+                        ('ullTotalPageFile',ctypes.c_ulonglong),('ullAvailPageFile',ctypes.c_ulonglong),
+                        ('ullTotalVirtual',ctypes.c_ulonglong),('ullAvailVirtual',ctypes.c_ulonglong),
+                        ('ullAvailExtendedVirtual',ctypes.c_ulonglong)]
+        try:
+            mem=Memory(); mem.dwLength=ctypes.sizeof(Memory)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(mem)):
+                return mem.ullTotalPhys/1e9
+        except Exception: pass
+    return None
+
+
+def gpu_info():
+    names=[]; vram=[]
+    if shutil.which('nvidia-smi'):
+        try:
+            out=subprocess.run(['nvidia-smi','--query-gpu=name,memory.total','--format=csv,noheader,nounits'],
+                               capture_output=True,text=True,timeout=3,check=True).stdout
+            for row in out.splitlines():
+                name,mem=row.rsplit(',',1); names.append(name.strip()); vram.append(float(mem.strip())/1024)
+        except (OSError,ValueError,subprocess.CalledProcessError): pass
+    if sys.platform.startswith('linux'):
+        for p in Path('/sys/class/drm').glob('card*/device/mem_info_vram_total'):
+            try:
+                value=int(p.read_text().strip())/1e9
+                if value > .1: vram.append(value); names.append('DRM GPU')
+            except (ValueError,OSError): pass
+    if sys.platform == 'win32' and not vram:
+        try:
+            cmd=['powershell','-NoProfile','-Command',
+                 'Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Json -Compress']
+            out=subprocess.run(cmd,capture_output=True,text=True,timeout=5,check=True).stdout
+            objs=json.loads(out or '[]'); objs=[objs] if isinstance(objs,dict) else objs
+            for obj in objs:
+                names.append(str(obj.get('Name') or 'GPU'))
+                # WMI AdapterRAM often overflows above 4GiB: treat as unknown.
+        except (OSError, ValueError, subprocess.CalledProcessError): pass
+    return {'names':sorted(set(names)), 'vram_gb':max(vram) if vram else None}
+
+
+def load_skill(project: Path, skill_name: str):
+    if not re.fullmatch(r'[\w.-]{1,100}', skill_name or '') or skill_name in ('.','..'):
+        raise ValueError('Skill name must be an installed folder name')
+    path=project/'data'/'skills'/'imported'/skill_name/'SKILL.md'
+    if not path.is_file():
+        raise ValueError('Imported skill not found: '+skill_name)
+    return path.read_text(encoding='utf-8',errors='replace')[:16000]
+
+
+def determine_category(skill_text, explicit='auto'):
+    if explicit != 'auto': return explicit
+    text=skill_text.lower()
+    # Strongest signals first; do not let a generic "image" text imply vision
+    if re.search(r'browser_take_screenshot|playwright|screenshot|screen\s*captur|visual\s*(?:browser|agent)|computer\s*use',text): return 'vision'
+    if re.search(r'generate[_ -]?image|stable diffusion|comfyui|text.to.image',text): return 'image_generation'
+    if re.search(r'coding|code review|write code|refactor|git\b|javascript|typescript|development|python script|apply_patch|edit_file|run\.py',text): return 'coding'
+    if re.search(r'transcription|speech.to.text|text.to.speech|audio\b|podcast',text): return 'audio'
+    if re.search(r'pdf|ocr\b|analy[sz]e image|interpret photo|visual|image understanding',text): return 'vision'
+    if re.search(r'research|search the web|web_search|web_fetch|browsing',text): return 'research'
+    return 'general'
+
+
+def needs(category):
+    if category in ('vision','visual_docs'): return {'vision','tools'}
+    if category=='coding': return {'code','tools'}
+    if category in ('general','research','automation'): return {'tools'}
+    return set()
+
+
+def fit(model, ram, vram):
+    # Conservative rough estimate: quant weights plus KV cache / runtime headroom.
+    estimate = model['gb']*1.25 + 1.6
+    if vram is not None and estimate <= vram*0.90:
+        return 'gpu-fit', 3, estimate
+    if ram is not None and estimate > ram*0.90:
+        return 'unlikely', 0, estimate
+    if ram is not None and estimate <= ram*0.75:
+        return ('hybrid/CPU' if vram is not None else 'RAM-fit/GPU-unknown'), 2, estimate
+    if ram is not None:
+        return 'tight', 1, estimate
+    return 'unknown', 1, estimate
+
+
+def test_data(project):
+    path=project/'data/local/zarzysseus-model-v10-tests.json'
+    try:
+        obj=json.loads(path.read_text(encoding='utf-8'))
+        return obj if isinstance(obj,dict) else {}
+    except (OSError, ValueError): return {}
+
+
+def prefs_path(project): return project/'data/local/zarzysseus-model-v10-prefs.json'
+
+
+def prefs(project):
+    try: return json.loads(prefs_path(project).read_text(encoding='utf-8'))
+    except (OSError,ValueError): return {}
+
+
+def save_json(path, obj):
+    path.parent.mkdir(parents=True,exist_ok=True)
+    tmp=path.with_name(path.name+'.tmp')
+    tmp.write_text(json.dumps(obj,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+    try: os.chmod(tmp,0o600)
+    except OSError: pass
+    tmp.replace(path)
+
+
+def candidates(category, inventory, ram, vram, tests, preferred=None):
+    required=needs(category)
+    if category in ('audio','image_generation'):
+        return []  # separate runtime, not language model
+    results=[]
+    for m in CATALOG:
+        if not required.issubset(set(m['caps'])): continue
+        status, f, memory=fit(m,ram,vram)
+        installed=installed_match(m['id'],inventory)
+        tested=tests.get(m['id'],{})
+        probed=tested.get('tool_probe') is True
+        score=m['quality']*4 + (25 if f==3 else 10 if f==2 else -10 if f==1 else -35) + (36 if installed else 0) + (12 if probed else 0) - (m['gb']*.6)
+        if status=='unlikely': score-=75
+        if vram is None and m['gb'] > 7: score-=18  # avoid recommending very large CPU-only loads
+        if category=='research' and 'vision' in m['caps']: score-=4
+        if m['id']==preferred: score+=7
+        results.append({**m,'installed':bool(installed),'installed_name':installed,
+                        'fit':status,'estimated_gb':round(memory,1),'tool_test':'pass' if probed else ('fail' if tested.get('tool_probe') is False else 'not-tested'),
+                        'score':score,'preferred':m['id']==preferred})
+    return sorted(results,key=lambda x:(x['fit']=='unlikely', -x['score'] if x['fit']!='unlikely' else x['gb'],x['gb'],x['id']))
+
+
+def safe_ollama_tool_test(model_id):
+    # Model must be installed; does not dispatch any tool, visit sites or use files.
+    schema={'type':'function','function':{'name':'diagnostic_ping','description':'A safe simulated ping; do not execute.',
+            'parameters':{'type':'object','properties':{'value':{'type':'integer'}},'required':['value']}}}
+    answer=api('POST','/api/chat',{'model':model_id,'stream':False,'messages':[
+        {'role':'system','content':'Call diagnostic_ping with value=7. Use a structured tool call, not text.'},
+        {'role':'user','content':'Call diagnostic_ping with value 7 now.'}], 'tools':[schema], 'options':{'num_predict':768}},timeout=90)
+    calls=answer.get('message',{}).get('tool_calls',[])
+    for c in calls:
+        fn=c.get('function',{})
+        arguments=fn.get('arguments',{})
+        if isinstance(arguments,str):
+            try: arguments=json.loads(arguments)
+            except ValueError: arguments={}
+        if fn.get('name')=='diagnostic_ping' and isinstance(arguments,dict) and arguments.get('value')==7:
+            return True
+    return False
+
+
+def main(argv=None):
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('action',choices=['recommend','json','best','test','install','pin','pins'])
+    p.add_argument('--project',required=True)
+    p.add_argument('--skill',default='')
+    p.add_argument('--category',choices=['auto','vision','coding','general','research','automation','audio','image_generation'],default='auto')
+    p.add_argument('--model',default='')
+    p.add_argument('--yes',action='store_true')
+    p.add_argument('--ram-gb',type=float,default=None,help='Override undetectable RAM (for tests)')
+    p.add_argument('--vram-gb',type=float,default=None,help='Override undetectable GPU VRAM (for tests)')
+    args=p.parse_args(argv)
+    project=Path(args.project).expanduser().resolve()
+    text=load_skill(project,args.skill) if args.skill else ''
+    category=determine_category(text,args.category)
+    inventory=installed_inventory()
+    ram=args.ram_gb if args.ram_gb is not None else host_ram_gb()
+    gpu=gpu_info()
+    vram=args.vram_gb if args.vram_gb is not None else gpu['vram_gb']
+    saved=prefs(project)
+    preferred=saved.get(args.skill,'') if args.skill else ''
+    ranked=candidates(category,inventory,ram,vram,test_data(project),preferred)
+    if args.action in ('recommend','json','best'):
+        doc={'skill':args.skill or 'general','category':category,'hardware':{'ram_gb':round(ram,1) if ram else None,
+            'gpu_names':gpu['names'],'gpu_vram_gb':round(vram,1) if vram else None},
+            'ollama_reachable':bool(inventory),'suggestions':ranked,'saved_preference':preferred}
+        if args.action=='json': print(json.dumps(doc,indent=2));return 0
+        if args.action=='best':
+            if not ranked: return 3
+            print(ranked[0]['id']);return 0
+        print('=== ZARZYSSEUS V10 SKILL-AWARE MODEL ADVISOR ===')
+        print(f"Skill: {doc['skill']} | Workload: {category}")
+        print(f"RAM: {ram:.1f} GB" if ram else 'RAM: unknown', '| GPU:', ', '.join(gpu['names']) or 'undetected', '| dedicated VRAM:',f'{vram:.1f} GB' if vram else 'unknown')
+        print(f'Installed Ollama models: {len(inventory)} (0 may mean Ollama offline)')
+        if not ranked:
+            print('No text/vision model can directly perform this workload; configure its specialized runtime/backend.');return 0
+        for i,m in enumerate(ranked[:9],1):
+            print(f" {i}. {m['id']:<24} {m['fit']:<20} {'INSTALLED' if m['installed'] else 'download'} | tool-test={m['tool_test']}")
+            print(f"    ~{m['gb']} GB download, ~{m['estimated_gb']} GB estimated runtime; {m['note']}")
+        if preferred: print('Saved skill preference:',preferred,'(not an automatic Odysseus model switch)')
+        print('Memory figures are estimates, not guarantees. Published capability != proven Odysseus integration.')
+        print('Nothing is downloaded or switched by this command.')
+        return 0
+    if args.action=='pins':
+        print(json.dumps(saved,indent=2,sort_keys=True));return 0
+    if args.action=='pin':
+        if not args.skill or not args.model or args.model not in BY_ID:
+            p.error('pin requires --skill INSTALLED_SKILL --model KNOWN_MODEL')
+        if args.model not in [m['id'] for m in ranked]: p.error('model lacks mandatory workload capabilities')
+        if not args.yes: p.error('pin requires explicit --yes')
+        saved[args.skill]=args.model
+        save_json(prefs_path(project),saved)
+        print('Saved advisory preference; active Odysseus chat model unchanged.')
+        return 0
+    if args.action=='test':
+        if not args.model: p.error('test requires --model')
+        installed=installed_match(args.model,inventory)
+        if not installed:
+            print('ERROR: model is not installed or Ollama is unreachable.',file=sys.stderr);return 2
+        try: passed=safe_ollama_tool_test(installed)
+        except (OSError,ValueError,urllib.error.URLError) as exc:
+            print('ERROR: Ollama tool probe could not complete:',exc,file=sys.stderr);return 2
+        results=test_data(project)
+        results[args.model]={'tool_probe':passed,'timestamp':int(time.time()),'scope':'Ollama synthetic tool schema only'}
+        save_json(project/'data/local/zarzysseus-model-v10-tests.json',results)
+        print(('PASS' if passed else 'FAIL')+': structured diagnostic_ping tool proposal'+('' if passed else ' missing')+'. Tool was NOT executed.')
+        print('This does not prove MCP, screenshot rendering or agent chat continuity.')
+        return 0 if passed else 1
+    if args.action=='install':
+        selected=args.model or (ranked[0]['id'] if ranked else '')
+        if selected not in BY_ID or selected not in [m['id'] for m in ranked]:
+            print('ERROR: select a supported model for this workload (no arbitrary pull).',file=sys.stderr);return 2
+        row=next(m for m in ranked if m['id']==selected)
+        print(f"Proposed Ollama download: {selected} (~{row['gb']} GB). No chat model will be changed.")
+        if row['installed']:
+            print('Already installed; nothing downloaded.');return 0
+        if row['fit']=='unlikely':
+            print('WARNING: estimated memory exceeds physical RAM. Refusing automatic selection.',file=sys.stderr);return 2
+        if not args.yes:
+            if not sys.stdin.isatty():
+                print('ERROR: interactive approval required (or explicit --yes).',file=sys.stderr);return 3
+            if input('Type YES to download this model: ').strip() != 'YES':
+                print('Cancelled.');return 3
+        executable=shutil.which('ollama')
+        if not executable:
+            print('ERROR: ollama executable not found. Install Ollama first.',file=sys.stderr);return 2
+        return subprocess.run([executable,'pull',selected],check=False).returncode
+    return 2
+
+if __name__=='__main__':
+    raise SystemExit(main())
+PY_SKILL_MODEL_V10
+}
+skills_v10_run() {
+    skills_v10_prepare_helper || return 1
+    local py="$VENV_DIR/bin/python"
+    [[ -x "$py" ]] || py="$(command -v python3 || true)"
+    [[ -n "$py" ]] || { echo 'ERROR: Python 3 required for V10 advisor.'; return 1; }
+    "$py" "$(skills_v10_helper_path)" "$1" --project "$PROJECT_DIR" "${@:2}"
+}
+
 skills_mcp_autoprovision_all() {
     [[ "${ZARZYSSEUS_SKILL_MCP_AUTO_INSTALL:-1}" == 1 ]] || {
         echo '    [skip] Skill MCP auto-provisioning disabled by ZARZYSSEUS_SKILL_MCP_AUTO_INSTALL=0.'
@@ -4157,6 +4789,39 @@ for md in sorted(root.glob('*/SKILL.md')):
         server_id=('skill_'+slug(skill_name)+'_'+slug(declared_name))[:90]
         display=f'skill:{skill_name}:{declared_name}'
         row_args=None; row_env=None; row_url=None; row_command=None; enabled=True; tools=[]
+        # V9: no new unreviewed MCP server is downloaded, launched or registered.
+        approval_key=f'{md.parent.name}/{declared_name}'
+        fp=hashlib.sha256(json.dumps(spec,sort_keys=True,default=str,separators=(',',':')).encode()).hexdigest()
+        approval_path=project/'data'/'local'/'zarzysseus-skill-v9-approvals.json'
+        try:
+            approval_data=json.loads(approval_path.read_text(encoding='utf-8'))
+            if not isinstance(approval_data,dict) or approval_data.get('version')!=1:
+                approval_data={'version':1,'approved':{},'legacy':{}}
+        except (OSError,ValueError,AttributeError):
+            approval_data={'version':1,'approved':{},'legacy':{}}
+        approved=(approval_data.get('approved') or {}).get(approval_key)==fp
+        if not approved:
+            with SessionLocal() as db:
+                existing=db.get(McpServer,server_id)
+                legacy_enabled=bool(existing and existing.is_enabled)
+            legacy=approval_data.get('legacy') or {}
+            if not isinstance(legacy,dict): legacy={}
+            if legacy_enabled and approval_key not in legacy and approval_key not in (approval_data.get('approved') or {}):
+                # One-time trust snapshot of a server that was already enabled before V9.
+                # Further edits to this skill MCP declaration must be reviewed again.
+                legacy[approval_key]=fp
+                approval_data['legacy']=legacy
+                approval_path.parent.mkdir(parents=True,exist_ok=True)
+                tmp=approval_path.with_suffix('.tmp')
+                tmp.write_text(json.dumps(approval_data,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+                os.chmod(tmp,0o600)
+                tmp.replace(approval_path)
+            legacy_allowed=legacy_enabled and legacy.get(approval_key)==fp
+            if not legacy_allowed:
+                disabled+=1
+                print(f'    [approval-required] {skill_name}/{declared_name}: V9 skills-setup must approve this MCP declaration first')
+                continue
+            print(f'    [legacy-config] {skill_name}/{declared_name}: retaining previously enabled unchanged server')
         if transport=='stdio':
             command=spec.get('command'); args=spec.get('args') or []
             if isinstance(command,list) and command:
@@ -5444,12 +6109,931 @@ if __name__ == '__main__':
 PY_ZAR_AGENT_RUNTIME_V4
 }
 
+agent_runtime_v5() {
+    local mode="${1:-status}" py
+    py="$VENV_DIR/bin/python"
+    [[ -x "$py" ]] || py="$(command -v python3 || true)"
+    [[ -n "$py" ]] || { echo 'ERROR: Python 3 required for V5'; return 1; }
+    "$py" - "$mode" "$PROJECT_DIR" <<'PY_ZAR_AGENT_RUNTIME_V5'
+#!/usr/bin/env python3
+"""Zarzysseus V5: preserve authorized browser screenshot continuation after approval.
+
+Requires the installed, unchanged V4 agent source, with its manifest present.
+This is a source-guarded compatibility repair, not an alternative executor.
+CLI: install|status|rollback CHECKOUT_DIR
+"""
+from __future__ import annotations
+import argparse
+import ast
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+MARKER = '# ZARZYSSEUS_APPROVED_BROWSER_CONTINUATION_V5'
+V4_MARKER = '# ZARZYSSEUS_COMPACT_BROWSER_FALLBACK_V4'
+
+REQUEST_ANCHOR = '    _last_user = _extract_last_user_message(messages)\n'
+TOOLS_ANCHOR = '    _intent_domains = set(_intent.get("domains") or set())\n'
+V2_ANCHOR = '        return _zarzysseus_route_web_tools_v2(schemas, _last_user)\n'
+QWEN_ANCHOR = '                _zar_text = _last_user or ""\n'
+V4_REQ_ANCHOR = '            and not _ody_doc_finetune_mode and not _approved_result_injected\n'
+V4_TEXT_ANCHOR = '            _zar_text_v4 = str(_last_user or "")\n'
+NAV_SUCCESS_ANCHOR = '                    and e.get("exit_code") in (None, 0)\n'
+
+REQUEST_BLOCK = r'''    # ZARZYSSEUS_APPROVED_BROWSER_CONTINUATION_V5
+    # Approval restarts the request with new tool retrieval. Retain the user\'s
+    # original screenshot instruction ONLY for a matching sealed browser navigation.
+    # No tool is executed here, and this cannot grant an otherwise disabled tool.
+    _zar_approved_browser_followup_v5 = ""
+    _zar_approved_browser_target_v5 = ""
+    if (
+        exact_approval is not None and mcp_mgr is not None
+        and not guide_only and not plan_mode
+        and getattr(exact_approval.pending, "tool_name", None)
+            == "mcp__builtin_browser__browser_navigate"
+    ):
+        try:
+            from urllib.parse import urlsplit as _zar_urlsplit_v5
+            _zar_pending_v5 = exact_approval.pending
+            _zar_exact_valid_v5 = exact_approval.matches(
+                owner=owner, session_id=session_id,
+                tool_name=_zar_pending_v5.tool_name,
+                content=_zar_pending_v5.content, workspace=workspace,
+            )
+            _zar_approved_url_v5 = ""
+            if _zar_exact_valid_v5:
+                _zar_pending_args_v5 = json.loads(_zar_pending_v5.content)
+                if isinstance(_zar_pending_args_v5, dict):
+                    _zar_approved_url_v5 = str(_zar_pending_args_v5.get("url") or "")
+            _zar_parsed_v5 = _zar_urlsplit_v5(_zar_approved_url_v5)
+            if (_zar_parsed_v5.scheme in ("http", "https") and _zar_parsed_v5.hostname
+                    and not _zar_parsed_v5.username and not _zar_parsed_v5.password):
+                # Only explicit user-authored messages count: no assistant text,
+                # tool output, fetched pages, or approval note can trigger this.
+                for _zar_msg_v5 in reversed(messages[-24:]):
+                    if not isinstance(_zar_msg_v5, dict) or _zar_msg_v5.get("role") != "user":
+                        continue
+                    _zar_content_v5 = _zar_msg_v5.get("content")
+                    if not isinstance(_zar_content_v5, str):
+                        continue
+                    _zar_user_urls_v5 = [
+                        candidate.rstrip(".,;:!?")
+                        for candidate in re.findall(r"https?://[^\s<>\"'\)\]]+", _zar_content_v5, re.I)
+                    ]
+                    if _zar_approved_url_v5 not in _zar_user_urls_v5:
+                        continue
+                    # The most recent user turn mentioning this URL controls
+                    # intent. An older screenshot request cannot be resurrected.
+                    if not re.search(r"\b(?:screenshot|screen\s*shot|capture|picture)\b", _zar_content_v5, re.I):
+                        break
+                    _zar_approved_browser_followup_v5 = _zar_content_v5
+                    _zar_approved_browser_target_v5 = _zar_approved_url_v5
+                    _last_user = _zar_content_v5  # preserve tool-routing context after approval
+                    logger.info("[zarzysseus-agent-v5] validated approved browser screenshot continuation")
+                    break
+        except (AttributeError, ValueError, TypeError, json.JSONDecodeError):
+            # Unexpected request/approval shapes fail closed.
+            pass
+'''
+
+TOOLS_BLOCK = r'''    # ZARZYSSEUS_APPROVED_BROWSER_CONTINUATION_V5_TOOL_KEEP
+    # Recheck the current enabled MCP inventory and disabled-tool policy.
+    # This only reintroduces an *existing* screenshot schema for this request.
+    if _zar_approved_browser_followup_v5 and mcp_mgr is not None and not guide_only:
+        _zar_screenshot_name_v5 = "mcp__builtin_browser__browser_take_screenshot"
+        if _zar_screenshot_name_v5 not in disabled_tools:
+            try:
+                _zar_enabled_schemas_v5 = mcp_mgr.get_all_openai_schemas(_mcp_disabled_map)
+                if any(
+                    (s.get("function") or {}).get("name") == _zar_screenshot_name_v5
+                    for s in _zar_enabled_schemas_v5 if isinstance(s, dict)
+                ):
+                    if _relevant_tools is None:
+                        _relevant_tools = set()
+                    _relevant_tools.add(_zar_screenshot_name_v5)
+                    logger.info("[zarzysseus-agent-v5] retained enabled screenshot schema for approved continuation")
+                else:
+                    logger.warning("[zarzysseus-agent-v5] screenshot tool unavailable or disabled")
+            except Exception as _zar_err_v5:
+                logger.warning("[zarzysseus-agent-v5] screenshot capability check failed: %s", type(_zar_err_v5).__name__)
+'''
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def paths(checkout: Path):
+    root = checkout.expanduser().resolve()
+    backup_dir = root / 'data' / 'local' / 'patch-backups'
+    return (root / 'src' / 'agent_loop.py',
+            backup_dir / 'agent-approved-browser-v5.before.py',
+            backup_dir / 'agent-approved-browser-v5.json',
+            backup_dir / 'agent-compact-browser-v4.json')
+
+
+def replace_one(src: str, old: str, new: str) -> str:
+    if src.count(old) != 1:
+        raise ValueError('Upstream source anchor changed or ambiguous: ' + repr(old[:85]))
+    return src.replace(old, new, 1)
+
+
+def build(src: str) -> str:
+    if MARKER in src:
+        raise ValueError('V5 already installed')
+    if V4_MARKER not in src or '# ZARZYSSEUS_AGENT_THINKING_RECOVERY_V3' not in src:
+        raise ValueError('Requires V4/V3 installed source')
+    src = replace_one(src, REQUEST_ANCHOR, REQUEST_ANCHOR + REQUEST_BLOCK)
+    src = replace_one(src, TOOLS_ANCHOR, TOOLS_BLOCK + TOOLS_ANCHOR)
+    # Scope changes to the V4 runtime block rather than an unrelated V3 retry.
+    v4_start = src.find('        # ZARZYSSEUS_COMPACT_BROWSER_FALLBACK_V4\n')
+    v4_end = src.find('        # ZARZYSSEUS_AGENT_THINKING_RECOVERY_V3\n', v4_start)
+    if v4_start < 0 or v4_end < 0:
+        raise ValueError('Expected adjacent V4/V3 runtime blocks missing')
+    v4_block = src[v4_start:v4_end]
+    v4_block = replace_one(v4_block, V4_REQ_ANCHOR, '            and not _ody_doc_finetune_mode\n            and (not _approved_result_injected or bool(_zar_approved_browser_followup_v5))\n')
+    v4_block = replace_one(v4_block, NAV_SUCCESS_ANCHOR, '                    and e.get("exit_code") == 0\n')
+    src = src[:v4_start] + v4_block + src[v4_end:]
+    ast.parse(src)
+    return src
+
+
+def write_atomic(path: Path, data: bytes):
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix='.zar-v5-')
+    try:
+        with os.fdopen(fd, 'wb') as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, path.stat().st_mode & 0o777)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('mode', choices=('install', 'status', 'rollback'))
+    parser.add_argument('checkout', nargs='?', default=str(Path.home() / 'odysseus'))
+    args = parser.parse_args()
+    source, backup, manifest, v4_manifest = paths(Path(args.checkout))
+    try:
+        if not source.is_file():
+            raise ValueError(f'Missing agent source: {source}')
+        src_bytes = source.read_bytes()
+        src = src_bytes.decode('utf-8')
+        if args.mode == 'status':
+            found = MARKER in src
+            print('V5 approved browser continuation:', 'installed' if found else 'not installed')
+            print('V5 backup manifest:', 'present' if manifest.exists() else 'absent')
+            if found:
+                if not manifest.exists() or digest(src_bytes) != json.loads(manifest.read_text())['installed_sha256']:
+                    raise ValueError('V5 source differs from its manifest')
+            return 0 if found else 1
+        if args.mode == 'install':
+            if MARKER in src:
+                if not manifest.exists() or digest(src_bytes) != json.loads(manifest.read_text())['installed_sha256']:
+                    raise ValueError('V5 already installed but source/manifest differs; refusing overwrite')
+                print('    [ready] Agent approved-browser continuation V5 already installed')
+                return 0
+            if manifest.exists() or backup.exists():
+                raise ValueError('Existing V5 backup/manifest must be reconciled first')
+            if not v4_manifest.exists():
+                raise ValueError('V4 backup manifest missing; V5 refuses unmanaged source')
+            v4_state = json.loads(v4_manifest.read_text())
+            if digest(src_bytes) != v4_state.get('installed_sha256'):
+                raise ValueError('Installed V4 does not match saved digest; V5 refuses to overwrite')
+            result = build(src).encode('utf-8')
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            backup.write_bytes(src_bytes)
+            os.chmod(backup, 0o600)
+            state = dict(previous_sha256=digest(src_bytes), installed_sha256=digest(result),
+                         source=str(source), backup=str(backup))
+            try:
+                write_atomic(source, result)
+                manifest.write_text(json.dumps(state, indent=2) + '\n', encoding='utf-8')
+                os.chmod(manifest, 0o600)
+            except Exception:
+                if digest(source.read_bytes()) == digest(result):
+                    write_atomic(source, src_bytes)
+                raise
+            print('Installed Agent approved-browser screenshot continuation V5; upstream approvals unchanged.')
+            print('Backup:', backup)
+            return 0
+        if not manifest.exists() or not backup.exists():
+            raise ValueError('V5 manifest and backup required for rollback')
+        state = json.loads(manifest.read_text())
+        if MARKER not in src or digest(src_bytes) != state['installed_sha256']:
+            raise ValueError('V5 source changed since installation; refusing rollback')
+        previous = backup.read_bytes()
+        if digest(previous) != state['previous_sha256']:
+            raise ValueError('V5 backup corrupted; refusing rollback')
+        write_atomic(source, previous)
+        manifest.unlink()
+        backup.unlink()
+        print('V5 rolled back: exact V4 source restored')
+        return 0
+    except (ValueError, KeyError, OSError, UnicodeError, SyntaxError, json.JSONDecodeError) as e:
+        print('ERROR:', e, file=sys.stderr)
+        return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+
+PY_ZAR_AGENT_RUNTIME_V5
+}
+
+agent_runtime_v6() {
+    local mode="${1:-status}" py
+    py="$VENV_DIR/bin/python"
+    [[ -x "$py" ]] || py="$(command -v python3 || true)"
+    [[ -n "$py" ]] || { echo 'ERROR: Python 3 required for V6'; return 1; }
+    "$py" - "$mode" "$PROJECT_DIR" <<'PY_ZAR_AGENT_RUNTIME_V6'
+#!/usr/bin/env python3
+"""Zarzysseus V6: tightly scoped screenshot step after verified approved navigation.
+
+Upstream tool policy/approval and the existing executor remain authoritative.
+This repair queues an already user-requested screenshot rather than relying on
+another native model tool proposal after a reasoning-only continuation.
+
+CLI: python zarzysseus_browser_screenshot_v6.py install|status|rollback CHECKOUT
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+MARKER = '# ZARZYSSEUS_EXPLICIT_SCREENSHOT_CONTINUATION_V6'
+PREV_MARKER = '# ZARZYSSEUS_APPROVED_BROWSER_CONTINUATION_V5'
+INSERT_ANCHOR = '        # ZARZYSSEUS_COMPACT_BROWSER_FALLBACK_V4\n'
+BLOCK = r'''        # ZARZYSSEUS_EXPLICIT_SCREENSHOT_CONTINUATION_V6
+        # This is a deterministic continuation of an EXPLICIT, verified user
+        # screenshot request, NOT a model-generated tool proposal. Only after
+        # an exact approved browser navigation has succeeded, the screenshot
+        # function is still in the CURRENT supplied schemas, and its arguments
+        # schema has no mandatory fields, queue one capture through Odysseus's
+        # regular converter/policy/approval/execution path.
+        if (
+            not guide_only and not _force_answer and not plan_mode
+            and not _ody_doc_finetune_mode and _approved_result_injected
+            and bool(_zar_approved_browser_followup_v5)
+            and bool(_zar_approved_browser_target_v5)
+            and round_num == 1
+            and "qwen3-vl" in str(model or "").lower()
+            and _is_ollama_openai_compat_url(endpoint_url)
+            and not tool_blocks and not native_tool_calls
+            and not round_response.strip() and bool(round_reasoning.strip())
+        ):
+            _zar_nav_v6 = "mcp__builtin_browser__browser_navigate"
+            _zar_shot_v6 = "mcp__builtin_browser__browser_take_screenshot"
+            _zar_nav_ok_v6 = any(
+                isinstance(e, dict)
+                and e.get("tool") == _zar_nav_v6
+                and e.get("exit_code") == 0
+                and not re.search(r"(?:^|\n)\s*(?:error|failed):", str(e.get("output") or ""), re.I)
+                for e in tool_events
+            )
+            _zar_shot_already_v6 = any(
+                isinstance(e, dict) and e.get("tool") == _zar_shot_v6
+                for e in tool_events
+            )
+            _zar_schemas_v6 = [
+                s for s in (all_tool_schemas or [])
+                if isinstance(s, dict)
+                and (s.get("function") or {}).get("name") == _zar_shot_v6
+            ]
+            if _zar_nav_ok_v6 and not _zar_shot_already_v6 and len(_zar_schemas_v6) == 1:
+                _zar_params_v6 = (_zar_schemas_v6[0].get("function") or {}).get("parameters") or {}
+                _zar_required_v6 = _zar_params_v6.get("required", []) if isinstance(_zar_params_v6, dict) else None
+                if _zar_required_v6 == []:
+                    # Empty args: the MCP tool uses its normal defaults; no
+                    # new URL, arbitrary filename, script, or external path.
+                    _zar_explicit_call_v6 = [{
+                        "id": "zarzysseus_explicit_screenshot_v6",
+                        "name": _zar_shot_v6,
+                        "arguments": "{}",
+                    }]
+                    _zar_blocks_v6, _zar_native_v6, _zar_converted_v6 = _resolve_tool_blocks(
+                        round_response, _zar_explicit_call_v6, round_num, is_api_model=True,
+                    )
+                    if len(_zar_blocks_v6) == 1 and _zar_native_v6 and _zar_blocks_v6[0].tool_type == _zar_shot_v6:
+                        native_tool_calls = _zar_explicit_call_v6
+                        tool_blocks = _zar_blocks_v6
+                        used_native = _zar_native_v6
+                        converted_calls = _zar_converted_v6
+                        logger.info(
+                            "[zarzysseus-agent-v6] queued explicitly requested screenshot via upstream approvals/executor"
+                        )
+                    else:
+                        logger.warning("[zarzysseus-agent-v6] screenshot call converter refused; no action queued")
+                else:
+                    logger.warning("[zarzysseus-agent-v6] screenshot schema requires arguments; refusing default capture")
+            elif _zar_nav_ok_v6 and not _zar_shot_already_v6:
+                logger.warning("[zarzysseus-agent-v6] screenshot schema missing or ambiguous; no action queued")
+'''
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def locations(root: Path):
+    root = root.expanduser().resolve()
+    backups = root / 'data' / 'local' / 'patch-backups'
+    return (
+        root / 'src' / 'agent_loop.py',
+        backups / 'agent-explicit-screenshot-v6.before.py',
+        backups / 'agent-explicit-screenshot-v6.json',
+        backups / 'agent-approved-browser-v5.json',
+    )
+
+
+def patch_source(source: str) -> str:
+    if MARKER in source:
+        raise ValueError('V6 is already installed')
+    if PREV_MARKER not in source:
+        raise ValueError('Install V5 before V6')
+    if source.count(INSERT_ANCHOR) != 1:
+        raise ValueError('Unexpected upstream V4 anchor (missing or ambiguous)')
+    patched = source.replace(INSERT_ANCHOR, BLOCK + INSERT_ANCHOR, 1)
+    ast.parse(patched)
+    return patched
+
+
+def atomic_write(path: Path, data: bytes) -> None:
+    fd, name = tempfile.mkstemp(prefix='.zar-v6-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(name, path.stat().st_mode & 0o777)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('operation', choices=['install', 'status', 'rollback'])
+    p.add_argument('checkout', nargs='?', default=str(Path.home() / 'odysseus'))
+    args = p.parse_args(argv)
+    source, backup, manifest, prev_manifest = locations(Path(args.checkout))
+    try:
+        if not source.is_file():
+            raise ValueError(f'Missing upstream agent: {source}')
+        original = source.read_bytes()
+        current = original.decode('utf-8')
+        installed = MARKER in current
+        if args.operation == 'status':
+            print('V6 explicit screenshot continuation:', 'installed' if installed else 'not installed')
+            print('V6 backup manifest:', 'present' if manifest.is_file() else 'missing')
+            if installed:
+                if not manifest.exists() or json.loads(manifest.read_text('utf-8')).get('installed_sha256') != digest(original):
+                    raise ValueError('Installed V6 source differs from recorded digest')
+            return 0 if installed else 1
+        if args.operation == 'install':
+            if installed:
+                if not manifest.exists() or json.loads(manifest.read_text('utf-8')).get('installed_sha256') != digest(original):
+                    raise ValueError('Existing V6 was edited or manifest missing; refusing replacement')
+                print('    [ready] V6 explicit screenshot continuation already installed')
+                return 0
+            if manifest.exists() or backup.exists():
+                raise ValueError('Stale V6 backups exist: reconcile before installing')
+            if not prev_manifest.exists():
+                raise ValueError('V5 manifest missing: V6 refuses unmanaged source')
+            prev = json.loads(prev_manifest.read_text('utf-8'))
+            if digest(original) != prev.get('installed_sha256'):
+                raise ValueError('Current V5 source differs from saved digest; refusing patch')
+            patched = patch_source(current).encode('utf-8')
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            backup.write_bytes(original)
+            os.chmod(backup, 0o600)
+            state = {'previous_sha256': digest(original), 'installed_sha256': digest(patched),
+                     'source': str(source), 'backup': str(backup)}
+            try:
+                atomic_write(source, patched)
+                manifest.write_text(json.dumps(state, indent=2) + '\n', encoding='utf-8')
+                os.chmod(manifest, 0o600)
+            except Exception:
+                if digest(source.read_bytes()) == digest(patched):
+                    atomic_write(source, original)
+                raise
+            print('Installed V6 screenshot continuation (upstream approval/policy unchanged).')
+            print('Backup:', backup)
+            return 0
+        if not installed or not manifest.exists() or not backup.exists():
+            raise ValueError('V6 source/manifest/backup needed for rollback')
+        state = json.loads(manifest.read_text('utf-8'))
+        if digest(original) != state.get('installed_sha256'):
+            raise ValueError('V6 source was edited; rollback refused')
+        prev = backup.read_bytes()
+        if digest(prev) != state.get('previous_sha256'):
+            raise ValueError('V6 backup digest mismatch')
+        atomic_write(source, prev)
+        manifest.unlink()
+        backup.unlink()
+        print('V6 rolled back to exact V5 bytes')
+        return 0
+    except (OSError, ValueError, SyntaxError, KeyError, json.JSONDecodeError) as error:
+        print('ERROR:', error, file=sys.stderr)
+        return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+PY_ZAR_AGENT_RUNTIME_V6
+}
+
+agent_runtime_v7() {
+    local mode="${1:-status}" py
+    py="$VENV_DIR/bin/python"
+    [[ -x "$py" ]] || py="$(command -v python3 || true)"
+    [[ -n "$py" ]] || { echo 'ERROR: Python 3 required for V7'; return 1; }
+    "$py" - "$mode" "$PROJECT_DIR" <<'PY_ZAR_AGENT_RUNTIME_V7'
+#!/usr/bin/env python3
+"""Zarzysseus V7: treat an HTTP(S) URL as web content, never a workspace path.
+
+The installed upstream Odysseus _looks_like_workspace_coding_request() matched
+`//example.com` in `https://example.com` as a Unix path. With a workspace set,
+that activated Terminus-only routing and stripped Playwright browser MCP tools.
+This patch changes just the workspace detector; it does not grant any tool,
+change enabled/disabled MCP settings, or override approval/security decisions.
+"""
+from __future__ import annotations
+import argparse
+import ast
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+MARKER = '# ZARZYSSEUS_URL_WORKSPACE_ROUTING_V7'
+PREV_MARKER = '# ZARZYSSEUS_EXPLICIT_SCREENSHOT_CONTINUATION_V6'
+FUNCTION_ANCHOR = 'def _looks_like_workspace_coding_request(text: str) -> bool:'
+OLD_RETURN = '    return bool(_WORKSPACE_CODE_ACTION_RE.search(text) and _WORKSPACE_CODE_TARGET_RE.search(text))'
+NEW_RETURN = '''    # ZARZYSSEUS_URL_WORKSPACE_ROUTING_V7
+    # URLs are web resources, not local /paths. The upstream path regex can
+    # match //example.com inside https://example.com and incorrectly replace
+    # the browser toolset with workspace/terminal tools when a workspace exists.
+    # Preserve normal mixed URL + genuine repo/file tasks (they still match).
+    _zar_non_url_targets_v7 = re.sub(
+        r"(?i)\\b(?:https?://|www\\.)[^\\s\\\"'<>`]+", " ", text
+    )
+    return bool(
+        _WORKSPACE_CODE_ACTION_RE.search(_zar_non_url_targets_v7)
+        and _WORKSPACE_CODE_TARGET_RE.search(_zar_non_url_targets_v7)
+    )'''
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def locations(root: Path):
+    root = root.expanduser().resolve()
+    b = root / 'data' / 'local' / 'patch-backups'
+    return (root / 'src' / 'agent_loop.py', b / 'agent-url-workspace-v7.before.py',
+            b / 'agent-url-workspace-v7.json', b / 'agent-explicit-screenshot-v6.json')
+
+
+def patch_source(source: str) -> str:
+    if MARKER in source:
+        raise ValueError('V7 is already installed')
+    if PREV_MARKER not in source:
+        raise ValueError('Install V6 before V7')
+    if source.count(FUNCTION_ANCHOR) != 1 or source.count(OLD_RETURN) != 1:
+        raise ValueError('Upstream workspace detector changed; refuse unguarded patch')
+    fn = source.index(FUNCTION_ANCHOR)
+    end = source.find('\ndef ', fn + len(FUNCTION_ANCHOR))
+    if end == -1:
+        raise ValueError('Cannot safely locate detector end')
+    if OLD_RETURN not in source[fn:end]:
+        raise ValueError('Expected return not within workspace detector')
+    patched = source.replace(OLD_RETURN, NEW_RETURN, 1)
+    ast.parse(patched)
+    return patched
+
+
+def atomic_write(path: Path, data: bytes) -> None:
+    fd, name = tempfile.mkstemp(prefix='.zar-v7-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(name, path.stat().st_mode & 0o777)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def smoke(source: str) -> None:
+    tree = ast.parse(source)
+    required = ['_looks_like_workspace_coding_request']
+    regexes = ['_WORKSPACE_CODE_ACTION_RE', '_WORKSPACE_CODE_TARGET_RE']
+    nodes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+             and n.name in required]
+    assert len(nodes) == 1
+    assign_nodes = [n for n in tree.body if isinstance(n, ast.Assign) and any(
+        getattr(t, 'id', '') in regexes for t in n.targets)]
+    assert len(assign_nodes) == 2
+    import re
+    env = {'re': re}
+    exec(compile(ast.Module(body=assign_nodes + nodes, type_ignores=[]), 'agent_loop.py', 'exec'), env)
+    detector = env[required[0]]
+    cases = [
+        ('Open https://example.com, take a screenshot, display it here, and describe the page.', False),
+        ('Open https://example.com using the browser, take a screenshot', False),
+        ('Visit https://github.com and take a screenshot of the UI', False),
+        ('Open www.example.com in the browser and screenshot it', False),
+        ('Open https://example.com/docs/guide with Playwright', False),
+        ('Open /etc/hosts and inspect the file', True),
+        ('Read ~/project/file.py and fix it', True),
+        ('Fix this project bug', True),
+        ('Open https://example.com and edit my project file', True),
+        ('Inspect this workspace repo', True),
+    ]
+    for request, expected in cases:
+        got = bool(detector(request))
+        if got != expected:
+            raise AssertionError(f'{request!r}: got workspace={got}; expected {expected}')
+    print('PASS: browser URLs no longer trigger Terminus workspace mode')
+    print('PASS: local files, repo edits, mixed web+file tasks retain workspace routing')
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('operation', choices=('install', 'status', 'rollback', 'smoke'))
+    ap.add_argument('checkout', nargs='?', default=str(Path.home() / 'odysseus'))
+    args = ap.parse_args(argv)
+    source, backup, manifest, prev_manifest = locations(Path(args.checkout))
+    try:
+        if not source.is_file():
+            raise ValueError(f'Agent source missing: {source}')
+        original = source.read_bytes()
+        current = original.decode('utf-8')
+        installed = MARKER in current
+        if args.operation == 'status':
+            print('V7 URL/workspace routing fix:', 'installed' if installed else 'not installed')
+            print('V7 backup manifest:', 'present' if manifest.exists() else 'missing')
+            if installed:
+                if not manifest.is_file() or json.loads(manifest.read_text('utf-8')).get('installed_sha256') != digest(original):
+                    raise ValueError('Installed V7 differs from saved checksum')
+            return 0 if installed else 1
+        if args.operation == 'smoke':
+            smoke(current if installed else patch_source(current))
+            return 0
+        if args.operation == 'install':
+            if installed:
+                if not manifest.is_file() or json.loads(manifest.read_text('utf-8')).get('installed_sha256') != digest(original):
+                    raise ValueError('V7 modified since installation; refusing to overwrite')
+                print('    [ready] V7 URL/workspace routing fix already installed')
+                return 0
+            if backup.exists() or manifest.exists():
+                raise ValueError('Stale V7 manifest or backup; reconcile before installation')
+            if not prev_manifest.is_file():
+                raise ValueError('V6 backup manifest missing; refusing unmanaged upgrade')
+            prev = json.loads(prev_manifest.read_text('utf-8'))
+            if prev.get('installed_sha256') != digest(original):
+                raise ValueError('Current agent source differs from recorded V6; refusing patch')
+            patched = patch_source(current).encode('utf-8')
+            smoke(patched.decode('utf-8'))
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            backup.write_bytes(original)
+            os.chmod(backup, 0o600)
+            state = {'previous_sha256': digest(original), 'installed_sha256': digest(patched),
+                     'source': str(source), 'backup': str(backup)}
+            try:
+                atomic_write(source, patched)
+                manifest.write_text(json.dumps(state, indent=2) + '\n', encoding='utf-8')
+                os.chmod(manifest, 0o600)
+            except Exception:
+                if digest(source.read_bytes()) == digest(patched):
+                    atomic_write(source, original)
+                raise
+            print('Installed V7 URL-as-path routing repair (tool policy and approvals unchanged)')
+            print('Backup:', backup)
+            return 0
+        if not installed or not manifest.is_file() or not backup.is_file():
+            raise ValueError('V7 source/manifest/backup required for rollback')
+        state = json.loads(manifest.read_text('utf-8'))
+        if digest(original) != state.get('installed_sha256'):
+            raise ValueError('Installed V7 source was edited; refusing rollback')
+        old = backup.read_bytes()
+        if digest(old) != state.get('previous_sha256'):
+            raise ValueError('V7 backup digest mismatch')
+        atomic_write(source, old)
+        manifest.unlink()
+        backup.unlink()
+        print('V7 rolled back to exact V6 source')
+        return 0
+    except (OSError, ValueError, AssertionError, SyntaxError, UnicodeError, KeyError, json.JSONDecodeError) as e:
+        print('ERROR:', e, file=sys.stderr)
+        return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+PY_ZAR_AGENT_RUNTIME_V7
+}
+
+agent_runtime_v8() {
+    local mode="${1:-status}" py
+    py="$VENV_DIR/bin/python"
+    [[ -x "$py" ]] || py="$(command -v python3 || true)"
+    [[ -n "$py" ]] || { echo 'ERROR: Python 3 required for V8'; return 1; }
+    "$py" - "$mode" "$PROJECT_DIR" <<'PY_ZAR_AGENT_RUNTIME_V8'
+#!/usr/bin/env python3
+"""Zarzysseus V8: schema-valid screenshot continuation without fabricated model calls.
+
+Patches V6's approved navigation -> screenshot continuation to accept only
+known safe mandatory screenshot parameters. Rejects unexpected mandatory
+fields. Preserves Odysseus permissions/approvals, output handling, and rollback.
+
+Usage: python zarzysseus_screenshot_schema_v8.py install|status|rollback|smoke CHECKOUT
+"""
+from __future__ import annotations
+import argparse
+import ast
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+MARKER = '# ZARZYSSEUS_SCREENSHOT_SCHEMA_ARGS_V8'
+PREV_MARKER = '# ZARZYSSEUS_URL_WORKSPACE_ROUTING_V7'
+PREVIOUS_BRANCH_START = '                if _zar_required_v6 == []:\n'
+PREVIOUS_BRANCH_END = '            elif _zar_nav_ok_v6 and not _zar_shot_already_v6:\n'
+NEW_BRANCH = '''                # ZARZYSSEUS_SCREENSHOT_SCHEMA_ARGS_V8
+                # Some installed Playwright MCP adapters mark image format,
+                # scale or fullPage as required although the API has defaults.
+                # Supply safe values ONLY when their actual JSON schema agrees.
+                # Never supply filename: leaving it unset lets Playwright return
+                # the screenshot inline as image data instead of just a path.
+                _zar_args_v8 = {}
+                _zar_defaults_v8 = {"type": "png", "scale": "css", "fullPage": False}
+                _zar_expected_types_v8 = {"type": "string", "scale": "string", "fullPage": "boolean"}
+                _zar_properties_v8 = _zar_params_v6.get("properties", {}) if isinstance(_zar_params_v6, dict) else None
+                _zar_invalid_v8 = not (
+                    isinstance(_zar_required_v6, list)
+                    and all(isinstance(k, str) for k in _zar_required_v6)
+                    and isinstance(_zar_properties_v8, dict)
+                )
+                if not _zar_invalid_v8:
+                    for _zar_field_v8 in _zar_required_v6:
+                        if _zar_field_v8 not in _zar_defaults_v8:
+                            _zar_invalid_v8 = True
+                            break
+                        _zar_prop_v8 = _zar_properties_v8.get(_zar_field_v8)
+                        _zar_value_v8 = _zar_defaults_v8[_zar_field_v8]
+                        if not isinstance(_zar_prop_v8, dict):
+                            _zar_invalid_v8 = True
+                            break
+                        _zar_field_type_v8 = _zar_prop_v8.get("type")
+                        if _zar_field_type_v8 not in (None, _zar_expected_types_v8[_zar_field_v8]):
+                            _zar_invalid_v8 = True
+                            break
+                        _zar_enum_v8 = _zar_prop_v8.get("enum")
+                        if _zar_enum_v8 is not None and (
+                            not isinstance(_zar_enum_v8, list) or _zar_value_v8 not in _zar_enum_v8
+                        ):
+                            _zar_invalid_v8 = True
+                            break
+                        _zar_args_v8[_zar_field_v8] = _zar_value_v8
+                if not _zar_invalid_v8:
+                    _zar_explicit_call_v6 = [{
+                        "id": "zarzysseus_explicit_screenshot_v8",
+                        "name": _zar_shot_v6,
+                        "arguments": json.dumps(_zar_args_v8, separators=(",", ":")),
+                    }]
+                    _zar_blocks_v6, _zar_native_v6, _zar_converted_v6 = _resolve_tool_blocks(
+                        round_response, _zar_explicit_call_v6, round_num, is_api_model=True,
+                    )
+                    if len(_zar_blocks_v6) == 1 and _zar_native_v6 and _zar_blocks_v6[0].tool_type == _zar_shot_v6:
+                        native_tool_calls = _zar_explicit_call_v6
+                        tool_blocks = _zar_blocks_v6
+                        used_native = _zar_native_v6
+                        converted_calls = _zar_converted_v6
+                        logger.info(
+                            "[zarzysseus-agent-v8] queued schema-valid screenshot via upstream executor args=%s",
+                            sorted(_zar_args_v8),
+                        )
+                    else:
+                        logger.warning("[zarzysseus-agent-v8] screenshot converter refused; no action queued")
+                else:
+                    logger.warning(
+                        "[zarzysseus-agent-v8] unsupported mandatory screenshot fields: %s",
+                        _zar_required_v6,
+                    )
+'''
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def locations(root: Path):
+    root = root.expanduser().resolve()
+    b = root / 'data' / 'local' / 'patch-backups'
+    return root / 'src' / 'agent_loop.py', b / 'agent-screenshot-schema-v8.before.py', b / 'agent-screenshot-schema-v8.json', b / 'agent-url-workspace-v7.json'
+
+
+def patch_source(source: str) -> str:
+    if MARKER in source:
+        raise ValueError('V8 already installed')
+    if PREV_MARKER not in source:
+        raise ValueError('Install V7 before V8')
+    if source.count(PREVIOUS_BRANCH_START) != 1 or source.count(PREVIOUS_BRANCH_END) != 1:
+        raise ValueError('V6 screenshot branch changed; refusing unguarded patch')
+    start = source.index(PREVIOUS_BRANCH_START)
+    end = source.index(PREVIOUS_BRANCH_END)
+    if end <= start or end - start > 6000 or '# ZARZYSSEUS_EXPLICIT_SCREENSHOT_CONTINUATION_V6' not in source[:start]:
+        raise ValueError('Unexpected screenshot branch range')
+    old_segment = source[start:end]
+    if '_zar_explicit_call_v6' not in old_segment or 'screenshot schema requires arguments' not in old_segment:
+        raise ValueError('Unexpected V6 screenshot branch body')
+    patched = source[:start] + NEW_BRANCH + source[end:]
+    ast.parse(patched)
+    return patched
+
+
+def choose_safe_arguments(required, properties):
+    """Test oracle matching the deliberately conservative runtime logic."""
+    defaults = {'type': 'png', 'scale': 'css', 'fullPage': False}
+    types = {'type': 'string', 'scale': 'string', 'fullPage': 'boolean'}
+    if not isinstance(required, list) or not all(isinstance(k, str) for k in required) or not isinstance(properties, dict):
+        return None
+    args = {}
+    for field in required:
+        if field not in defaults or not isinstance(properties.get(field), dict):
+            return None
+        prop = properties[field]
+        if prop.get('type') not in (None, types[field]):
+            return None
+        enum = prop.get('enum')
+        if enum is not None and (not isinstance(enum, list) or defaults[field] not in enum):
+            return None
+        args[field] = defaults[field]
+    return args
+
+
+def smoke(source: str) -> None:
+    if MARKER not in source:
+        source = patch_source(source)
+    ast.parse(source)
+    props = {'type': {'type':'string','enum':['png','jpeg']}, 'scale':{'type':'string','enum':['css','device']}, 'fullPage':{'type':'boolean'}, 'filename':{'type':'string'}}
+    assert choose_safe_arguments([], props) == {}
+    assert choose_safe_arguments(['type'], props) == {'type':'png'}
+    assert choose_safe_arguments(['type','scale','fullPage'], props) == {'type':'png','scale':'css','fullPage':False}
+    assert choose_safe_arguments(['filename'], props) is None
+    assert choose_safe_arguments(['type'], {'type': {'type':'string','enum':['jpeg']}}) is None
+    assert choose_safe_arguments(['type'], {'type': {'type':'integer'}}) is None
+    assert choose_safe_arguments(['unexpected'], props) is None
+    assert 'and _approved_result_injected' in source
+    assert 'and bool(_zar_approved_browser_followup_v5)' in source
+    assert 'and not _zar_shot_already_v6' in source
+    assert 'and e.get("exit_code") == 0' in source
+    assert '_resolve_tool_blocks(' in source
+    assert '"filename":' not in NEW_BRANCH
+    print('PASS: safe required screenshot fields -> schema-valid, no filename')
+    print('PASS: unknown/unsafe mandatory fields are rejected')
+    print('PASS: approved successful navigation, one-shot guard, upstream executor preserved')
+
+
+def atomic_write(path: Path, data: bytes) -> None:
+    fd, name = tempfile.mkstemp(prefix='.zar-v8-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(name, path.stat().st_mode & 0o777)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('operation', choices=('install','status','rollback','smoke'))
+    parser.add_argument('checkout', nargs='?', default=str(Path.home() / 'odysseus'))
+    args = parser.parse_args(argv)
+    source, backup, manifest, prev_manifest = locations(Path(args.checkout))
+    try:
+        if not source.is_file():
+            raise ValueError(f'Agent source missing: {source}')
+        original = source.read_bytes()
+        current = original.decode('utf-8')
+        installed = MARKER in current
+        if args.operation == 'status':
+            print('V8 screenshot schema arguments:', 'installed' if installed else 'not installed')
+            print('V8 backup manifest:', 'present' if manifest.is_file() else 'missing')
+            if installed and (not manifest.is_file() or json.loads(manifest.read_text('utf-8')).get('installed_sha256') != digest(original)):
+                raise ValueError('Installed V8 source differs from recorded digest')
+            return 0 if installed else 1
+        if args.operation == 'smoke':
+            smoke(current)
+            return 0
+        if args.operation == 'install':
+            if installed:
+                if not manifest.is_file() or json.loads(manifest.read_text('utf-8')).get('installed_sha256') != digest(original):
+                    raise ValueError('Existing V8 source was modified; installation refused')
+                print('    [ready] V8 screenshot schema repair already installed')
+                return 0
+            if manifest.exists() or backup.exists():
+                raise ValueError('Stale V8 manifest or backup; reconcile first')
+            if not prev_manifest.is_file():
+                raise ValueError('V7 backup manifest missing')
+            prev = json.loads(prev_manifest.read_text('utf-8'))
+            if digest(original) != prev.get('installed_sha256'):
+                raise ValueError('Current V7 source differs from saved digest; refusing patch')
+            patched = patch_source(current).encode('utf-8')
+            smoke(patched.decode('utf-8'))
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            backup.write_bytes(original)
+            os.chmod(backup, 0o600)
+            state = {'previous_sha256':digest(original), 'installed_sha256':digest(patched), 'source':str(source), 'backup':str(backup)}
+            try:
+                atomic_write(source, patched)
+                manifest.write_text(json.dumps(state, indent=2) + '\n', encoding='utf-8')
+                os.chmod(manifest, 0o600)
+            except Exception:
+                if digest(source.read_bytes()) == digest(patched):
+                    atomic_write(source, original)
+                raise
+            print('Installed V8 schema-aware screenshot continuation (approvals unchanged)')
+            print('Backup:', backup)
+            return 0
+        if not installed or not manifest.is_file() or not backup.is_file():
+            raise ValueError('V8 source/manifest/backup required for rollback')
+        state = json.loads(manifest.read_text('utf-8'))
+        if digest(original) != state.get('installed_sha256'):
+            raise ValueError('Current source was edited since V8 install; rollback refused')
+        old = backup.read_bytes()
+        if digest(old) != state.get('previous_sha256'):
+            raise ValueError('V8 backup digest mismatch')
+        atomic_write(source, old)
+        manifest.unlink()
+        backup.unlink()
+        print('V8 rolled back to exact V7 source')
+        return 0
+    except (OSError, ValueError, AssertionError, SyntaxError, UnicodeError, KeyError, json.JSONDecodeError) as e:
+        print('ERROR:', e, file=sys.stderr)
+        return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+PY_ZAR_AGENT_RUNTIME_V8
+}
+
 agent_doctor() {
     echo '=== Zarzysseus Agent Doctor (read-only) ==='
     echo "Project: $PROJECT_DIR"
     agent_reliability status || true
     agent_runtime_v3 status || true
-    agent_runtime_v4 status || true
+    if grep -Fq 'ZARZYSSEUS_APPROVED_BROWSER_CONTINUATION_V5' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        echo 'V4 compact fallback: retained beneath V5'
+    else
+        agent_runtime_v4 status || true
+    fi
+    if grep -Fq ZARZYSSEUS_EXPLICIT_SCREENSHOT_CONTINUATION_V6 "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        echo "V5 approved browser continuation: retained beneath V6"
+    else
+        agent_runtime_v5 status || true
+    fi
+    if grep -Fq ZARZYSSEUS_URL_WORKSPACE_ROUTING_V7 "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        echo 'V6 screenshot continuation: retained beneath V7'
+    else
+        agent_runtime_v6 status || true
+    fi
+    if grep -Fq ZARZYSSEUS_SCREENSHOT_SCHEMA_ARGS_V8 "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        echo 'V7 URL/workspace routing: retained beneath V8'
+    else
+        agent_runtime_v7 status || true
+    fi
+    agent_runtime_v7 smoke || true
+    agent_runtime_v8 status || true
+    agent_runtime_v8 smoke || true
     if [[ -f "$PROJECT_DIR/src/agent_loop.py" ]] && grep -Fq 'ZARZYSSEUS_AGENT_RELIABILITY_V2' "$PROJECT_DIR/src/agent_loop.py"; then
         agent_reliability smoke || return 1
         agent_runtime_v3 smoke || return 1
@@ -5474,11 +7058,23 @@ agent_reliability_auto_install() {
     fi
     agent_reliability install || return $?
     if grep -Fq 'ZARZYSSEUS_COMPACT_BROWSER_FALLBACK_V4' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
-        echo '    [ready] V3 underlying recovery retained under V4'
+        echo '    [ready] V3 underlying recovery retained under V4/V5'
     else
         agent_runtime_v3 install || return $?
     fi
-    agent_runtime_v4 install
+    if ! grep -Fq 'ZARZYSSEUS_APPROVED_BROWSER_CONTINUATION_V5' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        agent_runtime_v4 install || return $?
+    fi
+    if ! grep -Fq 'ZARZYSSEUS_EXPLICIT_SCREENSHOT_CONTINUATION_V6' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        agent_runtime_v5 install || return $?
+    fi
+    if ! grep -Fq ZARZYSSEUS_URL_WORKSPACE_ROUTING_V7 "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        agent_runtime_v6 install || return $?
+    fi
+    if ! grep -Fq ZARZYSSEUS_SCREENSHOT_SCHEMA_ARGS_V8 "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        agent_runtime_v7 install || return $?
+    fi
+    agent_runtime_v8 install
 }
 
 agent_repair() {
@@ -5486,12 +7082,24 @@ agent_repair() {
     install_qwen_tool_focus || echo '    [warning] Qwen focus patch skipped; the reliability repair may still work.'
     agent_reliability install || return $?
     if grep -Fq 'ZARZYSSEUS_COMPACT_BROWSER_FALLBACK_V4' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
-        echo '    [ready] V3 underlying recovery retained under V4'
+        echo '    [ready] V3 underlying recovery retained under V4/V5'
     else
         agent_runtime_v3 install || return $?
     fi
-    agent_runtime_v4 install || return $?
-    rm -f "$HOME/.config/zarzysseus/agent-routing.disabled"
+    if ! grep -Fq 'ZARZYSSEUS_APPROVED_BROWSER_CONTINUATION_V5' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        agent_runtime_v4 install || return $?
+    fi
+    if ! grep -Fq 'ZARZYSSEUS_EXPLICIT_SCREENSHOT_CONTINUATION_V6' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        agent_runtime_v5 install || return $?
+    fi
+    if ! grep -Fq ZARZYSSEUS_URL_WORKSPACE_ROUTING_V7 "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        agent_runtime_v6 install || return $?
+    fi
+    if ! grep -Fq ZARZYSSEUS_SCREENSHOT_SCHEMA_ARGS_V8 "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        agent_runtime_v7 install || return $?
+    fi
+    agent_runtime_v8 install || return $?
+    rm -f "$HOME/.config/zarzysseus/agent-routing.disabled" "$HOME/.config/zarzysseus/agent-routing.disabled"
     if ! install_playwright_tool; then
         echo '    [warning] Browser MCP provisioning incomplete; see mcp-health for missing dependencies.'
     fi
@@ -5505,6 +7113,18 @@ agent_repair() {
 }
 
 agent_rollback() {
+    if grep -Fq 'ZARZYSSEUS_SCREENSHOT_SCHEMA_ARGS_V8' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        agent_runtime_v8 rollback || return $?
+    fi
+    if grep -Fq 'ZARZYSSEUS_URL_WORKSPACE_ROUTING_V7' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        agent_runtime_v7 rollback || return $?
+    fi
+    if grep -Fq 'ZARZYSSEUS_EXPLICIT_SCREENSHOT_CONTINUATION_V6' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        agent_runtime_v6 rollback || return $?
+    fi
+    if grep -Fq 'ZARZYSSEUS_APPROVED_BROWSER_CONTINUATION_V5' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
+        agent_runtime_v5 rollback || return $?
+    fi
     if grep -Fq 'ZARZYSSEUS_COMPACT_BROWSER_FALLBACK_V4' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
         agent_runtime_v4 rollback || return $?
     fi
@@ -6305,7 +7925,7 @@ detect_linux_install() {
         SERVICE_MANAGER="unknown"
     fi
 
-    if (( ! TUI_MODE )) && [[ "$TUI_CHILD" != "1" ]]; then
+    if (( ! TUI_MODE )) && [[ "$TUI_CHILD" != "1" && "$ACTION" != "model-advisor-json" ]]; then
         echo "    Linux distribution: $DISTRO_PRETTY_NAME"
         echo "    Distribution family: $DISTRO_FAMILY"
         echo "    Package manager:     $PKG"
@@ -11755,7 +13375,7 @@ _tui_run_command() {
     case "$action" in
         install|install-auto-fit|install-full|install-personal-faves|install-personal-skills|install-low-spec|install-low-spec-manual|install-lps|install-lps-manual|install-desert-sdk|model-install-audio|auth|tools|accelerator-setup|mlx-install|sam-mask-install|sam-mask|system-update|\
         opull|vpull|spull|mpull|hf-pull|model-install|model-pick|model-auto|\
-        install-manual-batch|model-pick-interactive|model-pull-batch|hf-token|ollama-pull|pull|skills-search-install|skills-install|skills-remove|skills-update|skills-update-one|skills-permissions-set|skills-permissions-clear|skills-sync-all)
+        install-manual-batch|model-pick-interactive|model-pull-batch|hf-token|ollama-pull|pull|skills-search-install|skills-install|skills-remove|skills-update|skills-update-one|skills-permissions-set|skills-permissions-clear|skills-sync-all|model-advisor-install|model-advisor-pin)
             stream_output=1
             ;;
     esac
@@ -14930,6 +16550,11 @@ tui_skills_menu() {
             'SKILLS DEPENDENCY FIXER (LIVE HEALTH + F TO FIX)' \
             'FIX ALL SKILLS (REPAIR EVERY INSTALLED SKILL)' \
             'SHOW SKILL SUMMARY' \
+            'V9: SKILLS + MCP HEALTH (READ-ONLY)' \
+            'V9: APPROVE + PROVISION SKILLS / MCP' \
+            'V10: SKILL MODEL ADVISOR (HARDWARE AUTO-FIT)' \
+            'V10: MODEL TOOL-CALL TEST (NO TOOLS EXECUTED)' \
+            'V10: INSTALL A RECOMMENDED MODEL (ASK FIRST)' \
             'BACK'; then
             choice="$TUI_CHOICE"
             case "$choice" in
@@ -14953,7 +16578,28 @@ tui_skills_menu() {
                     skill_input="$TUI_INPUT"
                     [[ -n "$skill_input" ]] && _tui_run_command "Skill summary: $skill_input" skills-summary "$skill_input"
                     ;;
-                7) return 0 ;;
+                7) _tui_run_command 'V9 skills and MCP health' skills-doctor ;;
+                8) _tui_run_command 'V9 consented skill and MCP setup' skills-setup ;;
+                9)
+                    _tui_prompt 'IMPORTED SKILL FOLDER (EMPTY FOR GENERAL)'
+                    skill_input="$TUI_INPUT"
+                    if [[ -n "$skill_input" ]]; then _tui_run_command 'V10 skill-aware model ranking' model-advisor "$skill_input"; else _tui_run_command 'V10 general model ranking' model-advisor; fi
+                    ;;
+                10)
+                    _tui_prompt 'INSTALLED OLLAMA MODEL ID TO TEST'
+                    [[ -n "$TUI_INPUT" ]] && _tui_run_command 'V10 harmless structured-tool probe' model-advisor-test "$TUI_INPUT"
+                    ;;
+                11)
+                    _tui_prompt 'IMPORTED SKILL FOLDER (EMPTY FOR GENERAL)'
+                    skill_input="$TUI_INPUT"
+                    _tui_prompt 'CATALOG MODEL ID (EMPTY FOR TOP RECOMMENDATION)'
+                    if [[ -n "$TUI_INPUT" ]]; then
+                        _tui_run_command 'V10 review and model download' model-advisor-install "$skill_input" "$TUI_INPUT"
+                    else
+                        _tui_run_command 'V10 review and model download' model-advisor-install "$skill_input"
+                    fi
+                    ;;
+                12) return 0 ;;
             esac
         else
             return 0
@@ -15280,14 +16926,61 @@ case "$ACTION" in
         ;;
     skills-install|skill-install)
         [[ -n "$MODEL_ARG" ]] || { echo "Usage: $0 skills-install <skill-name|skills.sh URL|GitHub repo|skill URL>"; exit 2; }
-        skills_install "$MODEL_ARG"
+        _v10_before_skills="$(mktemp)"
+        find "$PROJECT_DIR/data/skills/imported" -mindepth 2 -maxdepth 2 -type f -name SKILL.md -print 2>/dev/null >"$_v10_before_skills" || true
+        if ! skills_install "$MODEL_ARG"; then rm -f "$_v10_before_skills"; exit 1; fi
         install_qwen_tool_focus || true
         skills_runtime_repair_all || true
+        skills_v9_setup || echo '    [note] Skill installed; V9 setup not completed. Use skills-setup when ready.'
+        # Automatic *advice*, not a model download or chat-model switch.
+        while IFS= read -r _v10_new_skill_md; do
+            [[ -f "$_v10_new_skill_md" ]] || continue
+            if ! grep -Fxq -- "$_v10_new_skill_md" "$_v10_before_skills"; then
+                echo '=== V10 model recommendation for newly imported skill ==='
+                skills_v10_run recommend --skill "$(basename "$(dirname "$_v10_new_skill_md")")" || true
+            fi
+        done < <(find "$PROJECT_DIR/data/skills/imported" -mindepth 2 -maxdepth 2 -type f -name SKILL.md -print 2>/dev/null)
+        rm -f "$_v10_before_skills"
         ;;
     skills-sync-all)
         skills_sync_all_installed_to_odysseus
         install_qwen_tool_focus || true
         skills_runtime_repair_all || true
+        ;;
+    model-advisor|skill-models)
+        if [[ -n "$MODEL_ARG" ]]; then skills_v10_run recommend --skill "$MODEL_ARG"; else skills_v10_run recommend; fi
+        ;;
+    model-advisor-json)
+        if [[ -n "$MODEL_ARG" ]]; then skills_v10_run json --skill "$MODEL_ARG"; else skills_v10_run json; fi
+        ;;
+    model-advisor-test)
+        [[ -n "$MODEL_ARG" ]] || { echo 'Usage: model-advisor-test <installed-ollama-model>'; exit 2; }
+        skills_v10_run test --model "$MODEL_ARG"
+        ;;
+    model-advisor-install)
+        # Usage: model-advisor-install [imported-skill-folder] [catalog-model-id]
+        local_model="${3:-}"
+        local -a advisor_args=()
+        [[ -n "$MODEL_ARG" ]] && advisor_args+=(--skill "$MODEL_ARG")
+        [[ -n "$local_model" ]] && advisor_args+=(--model "$local_model")
+        skills_v10_run recommend "${advisor_args[@]}" || exit $?
+        skills_v10_run install "${advisor_args[@]}"
+        ;;
+    model-advisor-pin)
+        [[ -n "$MODEL_ARG" && -n "${3:-}" ]] || { echo 'Usage: model-advisor-pin <installed-skill-folder> <catalog-model-id>'; exit 2; }
+        printf 'Save %s as a recommendation for %s? This does not switch your active Odysseus model. Type YES: ' "$3" "$MODEL_ARG"
+        read -r response < /dev/tty || exit 3
+        [[ "$response" == YES ]] || { echo 'Cancelled.'; exit 3; }
+        skills_v10_run pin --skill "$MODEL_ARG" --model "$3" --yes
+        ;;
+    model-advisor-pins)
+        skills_v10_run pins
+        ;;
+    skills-doctor)
+        skills_v9_doctor ${MODEL_ARG:+--skill "$MODEL_ARG"}
+        ;;
+    skills-setup)
+        skills_v9_setup "$MODEL_ARG"
         ;;
     skills-runtime-fix)
         # Patch first, then let metadata/MCP repair perform one managed-service restart.
@@ -15747,6 +17440,14 @@ Usage:
   $0 skills-search <query>  Search the skills.sh registry and show skill summaries
   $0 skills-search-install <query>  Search, choose a result, show its summary, and install it
   $0 skills-install <name|skills.sh URL|GitHub repo|skill URL>  Download/install an agent skill via the official skills CLI
+  $0 model-advisor [skill-folder]      Recommend Ollama models for imported skill and detected hardware
+  $0 model-advisor-json [skill-folder] Read-only machine-readable V10 ranking
+  $0 model-advisor-test <model>       Probe actual Ollama structured tool call WITHOUT executing tool
+  $0 model-advisor-install [skill] [model]  Consent before download; no chat switch
+  $0 model-advisor-pin <skill> <model> Save advisory preference without switching chat
+  $0 model-advisor-pins              Display saved advisory choices
+  $0 skills-doctor [imported-folder]  Read-only V9 inventory: skill deps, native toolsets, declared MCP statuses
+  $0 skills-setup [imported-folder]   Review and approve V9 MCP declarations; provision/check imported skills
   $0 skills-sync-all        Sync installed skills into Zarzysseus data/skills and refresh the running service
   $0 skills-runtime-fix     Repair executable-skill native tool metadata and Qwen /skill focus
   $0 skills-mcp-fix         Auto-provision MCP servers explicitly declared by installed skills and bind discovered tools
@@ -15788,7 +17489,7 @@ Usage:
   $0 docker-setup        Explicitly install/start Docker Engine + Compose v2, then ChromaDB
   $0 tool-health         Inspect ChromaDB, Ollama endpoint flags, default/utility/teacher model settings
   $0 agent-doctor        Read-only checks and simulated web/browser tool-routing diagnostics
-  $0 agent-repair        Install V2+V3+V4 browser routing/recovery; restart managed Odysseus
+  $0 agent-repair        Install V2-V8 browser routing, approval continuation and recovery; restart managed Odysseus
   $0 agent-smoke         Exercise safe web-routing helper with mock offered tool schemas
   $0 agent-rollback      Restore original upstream agent loop if unchanged since repair
   $0 mcp-setup           Repair MCP, cache browser support, sync FreeMCP, provision declared skill MCPs, and tool-call recovery

@@ -8,7 +8,7 @@ Zarzysseus is a separate installer and management TUI for the upstream [Odysseus
 
 **Get started:** [Agent reliability & diagnostics](#agent-reliability-repair-and-diagnostics-linux-and-windows) · [Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows) · [Linux installation](#linux-installation) · [Windows installation](#windows-installation)
 
-**Configure:** [Network access & security](#network-discoverability-and-security-linux-and-windows) · [Docker & ChromaDB](#docker-and-chromadb-setup-linux-and-windows) · [Linux OS-update toggle](#linux-full-os-update-toggle) · [Same-chat continuity & Cookbook](#same-chat-continuity-and-cookbook-reliability) · [MCP & FreeMCP](#mcp-runtime-built-ins-and-freemcp) · [Skill-declared MCP auto-setup](#skill-declared-mcp-servers) · [Tool-call JSON recovery](#local-model-json-tool-call-recovery) · [Executable skills](#executable-skills-and-native-tool-routing) · [Linux distribution support](#linux-distribution-support) · [Windows support](#windows-support) · [Ollama vs Hugging Face model IDs](#ollama-vs-hugging-face-model-ids)
+**Configure:** [Network access & security](#network-discoverability-and-security-linux-and-windows) · [Docker & ChromaDB](#docker-and-chromadb-setup-linux-and-windows) · [Linux OS-update toggle](#linux-full-os-update-toggle) · [Same-chat continuity & Cookbook](#same-chat-continuity-and-cookbook-reliability) · [MCP & FreeMCP](#mcp-runtime-built-ins-and-freemcp) · [V9 skill & MCP manager](#v9-unified-skill-installation-mcp-consent-and-tool-health) · [V10 skill-aware model advisor](#v10-skill-aware-model-advisor-and-hardware-auto-fit) · [Skill-declared MCP auto-setup](#skill-declared-mcp-servers) · [Tool-call JSON recovery](#local-model-json-tool-call-recovery) · [Executable skills](#executable-skills-and-native-tool-routing) · [Linux distribution support](#linux-distribution-support) · [Windows support](#windows-support) · [Ollama vs Hugging Face model IDs](#ollama-vs-hugging-face-model-ids)
 
 **Troubleshoot:** [Odysseus fixes & diagnostics](#odysseus-integration-fixes-and-diagnostics) · [Linux repair commands](#linux-repair-and-verify) · [Windows repair commands](#windows-repair-and-verify) · [Verify tool execution](#confirm-a-tool-was-actually-executed) · [Requirements](#requirements)
 
@@ -24,8 +24,12 @@ Zarzysseus adds *guarded compatibility repairs* to Odysseus's Agent tool-routing
 | Agent Reliability V1/V2 | Prevents invented `browser-use` shell commands and focuses normal browser tasks on a small set of real authorized browser tools | Simulated routing tests cannot verify live MCP execution |
 | Thinking-only Recovery V3 | Retries once when the first Qwen3-VL browser round produces reasoning but no tool call; reports failure if the retry also fails | An identical large-context retry can fail again |
 | Compact Browser Fallback V4 | For a specific reasoning-only browser request containing an explicit HTTP(S) URL, asks the model for a real structured `browser_navigate` call through a compact prompt; after successful navigation, may request `browser_take_screenshot` | Experimental; does not guarantee a screenshot result or inline rendering |
+| Approved Browser Continuation V5 | On a matching approved navigation for an explicitly requested screenshot, restores the original screenshot intent and preserves its **existing enabled** browser screenshot tool for the resumed request | Does not bypass approvals, force unrelated actions, or guarantee the frontend displays an image |
+| Screenshot Schema Compatibility V8 | Applies explicit, schema-valid safe screenshot options after approved navigation if Playwright requires them | Refuses arbitrary filename/path requirements; inline image rendering remains host-test dependent |
+| URL/Workspace Routing V7 | Prevents Odysseus from treating `https://example.com` as a local `/path` and replacing browser MCP tools with the Terminus file/terminal toolset | Fixes tool selection before the model call; no guarantees on screenshot image rendering |
+| Explicit Screenshot Continuation V6 | When a Qwen3-VL approval continuation produces reasoning-only output after **successful approved navigation**, queues one user-requested screenshot with default arguments via Odysseus’s original converter, approval gate, and executor | Does not create images itself, approve the tool, override disabled tools, or guarantee inline rendering |
 
-**Execution and security:** The V4 fallback may propose only a browser tool already authorized by Odysseus. Accepted structured calls return to Odysseus's existing converter, execution dispatcher, and user approval checks. It does **not** click approval dialogs, execute untrusted text as shell commands, or grant new permissions. V4 is not desktop control or a multi-agent framework.
+**Execution and security:** The V4 fallback may propose only a browser tool already authorized by Odysseus. Accepted structured calls return to Odysseus's existing converter, execution dispatcher, and user approval checks. It does **not** click approval dialogs, execute untrusted text as shell commands, or grant new permissions. V5 additionally checks that an approved `browser_navigate` URL matches the most recent user-authored request about that URL, that the user asked for a screenshot, and that the screenshot MCP schema is enabled. It then preserves that request through the approval continuation; no new permissions are granted. Neither version is desktop control or a multi-agent framework.
 
 ### Linux CLI and TUI
 
@@ -66,17 +70,74 @@ For a live failure, inspect the corresponding service run (do not paste password
 
 ```bash
 journalctl --user -u odysseus.service --since '20 minutes ago' --no-pager \
-  | grep -Ei 'zarzysseus-agent-v4|browser_navigate|browser_take_screenshot|approval|tool.*start|tool.*output|mcp|error' \
+  | grep -Ei 'zarzysseus-agent-v8|zarzysseus-agent-v7|zarzysseus-agent-v6|zarzysseus-agent-v5|zarzysseus-agent-v4|browser_navigate|browser_take_screenshot|approval|tool.*start|tool.*output|mcp|error' \
   | tail -n 100
 ```
 
 If V4 logs **`native proposal accepted; handing to upstream executor`**, that proves only a valid proposed call reached the normal dispatcher. Next verify the tool executed and returned images, then inspect frontend rendering if the tool returned image data but the UI stayed empty. Do not keep reinstalling Playwright or bypassing approval rules simply because the image is missing.
 
+### V8: screenshot parameter-schema compatibility
+
+In the live Qwen3-VL browser test, Odysseus successfully navigated and retained
+`mcp__builtin_browser__browser_take_screenshot`, but the V6 continuation logged
+`[zarzysseus-agent-v6] screenshot schema requires arguments; refusing default capture`.
+V4's separate model proposal also failed. The screenshot tool was **not executed**.
+
+V8 extends the existing V6 continuation after a successful, approved navigation.
+It checks the **actual currently offered screenshot JSON schema** and supplies
+only recognized required fields with safe values: `type: "png"`, `scale: "css"`,
+and `fullPage: false`. It supplies **none** if there are no required fields.
+If an unknown, unsupported or incompatible required field exists—including
+`filename`—the continuation **fails closed** instead of guessing a path. It
+never injects a screenshot if navigation failed or the tool was disabled. The
+call uses Odysseus's original converter, approvals and executor.
+
+Importantly, the filename is intentionally omitted: the official Playwright
+MCP screenshot behavior returns inline image content when no filename is
+provided (unless the server is configured to omit image responses). This
+backend repair does **not** guarantee Odysseus renders that image in chat.
+
+After `agent-repair`, look for:
+
+```text
+[zarzysseus-agent-v8] queued schema-valid screenshot via upstream executor
+Tool executed: mcp: mcp__builtin_browser__browser_take_screenshot -> exit_code=0
+```
+
+If the first line appears but no execution follows, inspect tool approval or
+MCP execution. If both appear and no image is shown, inspect the browser result
+and Odysseus's `tool_output.screenshot` forwarding/rendering. Rollback restores
+exact V7 source before the existing V7→V1 chain.
+
+### V7: URL mistaken for a local workspace path
+
+On the CachyOS host, a fresh **Open `https://example.com`, take a screenshot** request still yielded `tools_sent=2` (`web_search`, `web_fetch`) despite the connected browser MCP. The installed upstream workspace detector's file-path expression matched `//example.com` **inside** the URL; with the default Agent workspace set, Odysseus logged `Workspace file/terminal request; using Odysseus Terminus toolset`, overwrote retrieved browser tools, and sent no Playwright schemas to Qwen.
+
+V7 corrects this detection error at the source by removing HTTP(S)/`www.` URLs *only for workspace-path classification*. Real local paths and mixed URL + project-file editing requests still activate Terminus as appropriate. Tool enable/disable settings, plan mode, browser MCP configuration, execution dispatcher, approval prompts and screenshot rendering remain unchanged. It backs up the exact V6 source with checksum-verified rollback. Linux and Windows installers include the fix internally; there is no additional skill or external browser binary to install.
+
+After `agent-repair`, the first live log for a browser-only screenshot request should show real `mcp__builtin_browser__browser_navigate` and `browser_take_screenshot` schemas rather than just `web_search` and `web_fetch`. **This must be verified on the host:** V7's simulated detector tests do not establish live screenshot execution or frontend rendering.
+
+### V5: fixing the post-approval screenshot drop
+
+In a live CachyOS test, V4 generated a valid `browser_navigate` call and Odysseus executed it with `exit_code=0`. When the approval continuation resumed, however, `[agent-debug]` showed `tools_sent=2` with **only** `web_search` and `web_fetch`. The screenshot MCP tool had disappeared before the model could call it.
+
+V5 addresses that exact handoff. It uses the verified approved-navigation URL and the most recent matching user screenshot request to restore the earlier browser intent. It retains `browser_take_screenshot` only when that function is still present in Odysseus's enabled MCP registry and permitted by its current tool policy; the usual tool dispatcher and approval checks remain in control. For Qwen3-VL reasoning-only continuations, V4's compact single-tool fallback can then propose the screenshot action. A successful screenshot capture and inline UI image rendering **still need a live test**.
+
+To inspect the resumed call, check for `[zarzysseus-agent-v5] validated approved browser screenshot continuation`, `[zarzysseus-agent-v5] retained enabled screenshot schema`, and then a `browser_take_screenshot` tool start/output. If the screenshot tool executed but no image appears, inspect the backend tool result's `images` data and the frontend's `tool_output.screenshot` rendering. A successful navigation alone is never proof of an image capture.
+
+### V6: screenshot after successful approved navigation
+
+A live test confirmed V5 preserved the screenshot function (`tools_sent=1` after navigation), but Qwen3-VL again produced reasoning only, and the compact V4 screenshot proposal yielded `no valid native tool proposal returned`. **This was a screenshot selection failure, not a missing Playwright installation.**
+
+V6 addresses exactly that dead end: when the original user expressly asked for a screenshot of the approved URL, the approved navigation succeeded, Qwen3-VL returns reasoning-only text, the screenshot function is still in the current authorized schema list, and its JSON schema requires no arguments, the runtime queues **one** screenshot with `{}` (default browser screenshot arguments). This is a deterministic continuation of the user request, **not a claimed model-generated function call**. The request still passes Odysseus's original tool converter, tool security policy, per-tool approval gate, and MCP executor. Failed navigation, mismatched approval, unavailable/disabled screenshot functions, and unrelated tasks do not trigger it.
+
+Look for `[zarzysseus-agent-v6] queued explicitly requested screenshot via upstream approvals/executor`, followed by an approval prompt (if required) and `Tool executed: mcp: mcp__builtin_browser__browser_take_screenshot`. If the latter succeeds but the image is absent, investigate the MCP result `images` payload and frontend `tool_output.screenshot` rendering separately. **V6 has only been tested against local source and simulated tool states, not yet with a live browser session.**
+
 ### Testing evidence and patch history
 
-On the reported CachyOS host, `qwen3-vl:8b` returned real structured calls through Ollama's native and OpenAI-compatible APIs, including streaming; a short isolated call through Odysseus's installed adapter also passed. Yet the full Agent request initially produced **reasoning only / zero tool calls**. V2 narrowed the browser tools to four; V3 retried without recovering; V4 introduced the compact fallback. **Successful live browser screenshot generation and inline display remain unverified.**
+On the reported CachyOS host, `qwen3-vl:8b` returned real structured calls through Ollama's native and OpenAI-compatible APIs, including streaming; a short isolated call through Odysseus's installed adapter also passed. Yet the full Agent request initially produced **reasoning only / zero tool calls**. V2 narrowed the browser tools to four; V3 retried without recovering; V4 introduced the compact fallback and the first live navigation executed successfully; the approved continuation lost browser schemas. V5 guards that continuation. A later live test confirmed V5 offered the screenshot tool, but the model and V4 compact fallback produced no valid screenshot proposal. V6 adds a tightly scoped explicit screenshot continuation. V7 then fixes a separate upstream regression that misclassifies URLs as workspace paths. **Successful live browser screenshot generation and inline display remain unverified.**
 
-The guarded repairs make changes to `src/agent_loop.py` in the detected Odysseus checkout. `agent-rollback` restores V4, V3, V2, and earlier agent repair layers in reverse order, provided their backups and digests match. After rollback, automatic reapplication remains disabled until an explicit repair.
+The guarded repairs make changes to `src/agent_loop.py` in the detected Odysseus checkout. `agent-rollback` restores V7, V6, V5, V4, V3, V2, and earlier agent repair layers in reverse order, provided their backups and digests match. After rollback, automatic reapplication remains disabled until an explicit repair.
 
 ## Recommended first-time setup: Hugging Face (Linux **and** Windows)
 
@@ -370,6 +431,131 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 freemcp
 If an older Zarzysseus build prints `ERROR: Could not find a version that satisfies the requirement freemcp-cli`, rerun with the current installer. The corrected implementation no longer tries to force-install that unavailable PyPI package; `freemcp-setup` now clones/updates the public registry cache and `freemcp-search` searches the cached JSON entries locally.
 
 The normal full/native install also attempts the MCP SDK compatibility check, browser MCP cache, FreeMCP registry sync, compact local-model tool-call recovery, and provisioning of MCP servers explicitly declared by installed skills automatically. All of these operations are safe to rerun. A missing/unpublished `freemcp-cli` package no longer aborts MCP setup. Registry search works without authentication; account login and remote deployment remain explicit user actions on `freemcp.space` unless a compatible CLI becomes available.
+
+## V9: Unified skill installation, MCP consent, and tool health
+
+**V9 builds on the verified V8 browser/screenshot runtime.** The underlying model/tool executor and permission system remain Odysseus's; installing a skill does not make a model *guaranteed* to use that skill. This update adds a unified **health → approve → install/repair → recheck** route for imported Odysseus Agent skills. Skills can work using native tools without any MCP server, and V9 **never invents or installs an unrelated MCP server**.
+
+### What happens to an imported skill
+
+1. Zarzysseus reads `data/skills/imported/<skill>/SKILL.md`, its `requires_toolsets`, supported dependency manifests, and *explicit* `mcpServers` / `mcp_servers` / `mcp-servers` declarations.
+2. **Skills Doctor** checks current manifest/toolset metadata and MCP registration without executing the skill or starting third-party MCP code. It distinguishes `unregistered`, `disabled-config`, `enabled-config`, and already-enabled legacy server entries. Python dependencies are checked by installed distribution name; this is **not** a full environment/package-version audit.
+3. **Skills Setup** prints a redacted plan (executable name or remote host but never environment values/secret arguments) and requires a typed `YES` before provisioning dependencies and authorizing new declared MCP servers. Approvals are bound to the exact imported-skill folder/server name and SHA-256 digest of that server declaration, saved with user-only permissions under `data/local/zarzysseus-skill-v9-approvals.json`. A changed/new declaration requires review again. Previously enabled MCP entries are retained for compatibility.
+4. After approval, supported dependency installers run, native tool metadata is repaired, declared stdio servers are tested by MCP `initialize`/`list_tools`, and the discovered qualified MCP names are bound into `requires_toolsets`. Missing credentials, unsupported commands, unsuccessful handshakes, or disabled servers remain **not ready**. Remote HTTP/SSE entries are registered but still need a live Odysseus connection before their tools are known.
+5. The final report shows remaining problems. A *live model tool call* and actual skill runner output must still be tested separately; `configured` is not a successful Agent execution guarantee.
+
+**Linux TUI:** **Skills.sh / Agent Skills → V9: Skills + MCP Health** or **V9: Approve + Provision Skills / MCP**. The existing Linux `skills-install` flow now offers V9 setup after import. Rejecting setup leaves the imported skill in place but does not provision new unapproved MCP servers.
+
+```bash
+./zarzysseus.sh skills-doctor                   # Read-only skill inventory
+./zarzysseus.sh skills-doctor imported-folder   # Inspect just one imported skill
+./zarzysseus.sh skills-setup                    # Review and approve setup for all imported skills
+./zarzysseus.sh skills-setup imported-folder    # Approve/setup one imported skill
+```
+
+**Windows TUI:** **Skills / Fix All → 5 V9 Health** or **6 V9 Approve + Setup**. The Windows commands audit/repair already imported skills and the existing Fave skills; the Windows edition does not yet provide the full Linux `skills.sh` marketplace/browser installer.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 skills-doctor
+powershell -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 skills-setup
+```
+
+**Security:** Installing or repairing a third-party skill can execute untrusted `pip`, npm, and MCP package code or contact an external server. Review the skill/source and approve only providers you trust. The normal server startup must not provision *new, unapproved* MCP declarations. For deliberately unattended Linux provisioning after an out-of-band review, `ZARZYSSEUS_SKILL_SETUP_APPROVED=1 ./zarzysseus.sh skills-setup` bypasses only Zarzysseus's installer prompt, **not** Odysseus's runtime tool approvals. Do not set it persistently for untrusted skills. Existing manually configured MCPs remain under Odysseus's own enable/disable settings.
+
+### What V9 does not claim
+
+- It does not synthesize an MCP server for a skill with no declared MCP dependency or magically provide external account credentials.
+- It does not prove all third-party tasks work; even with healthy MCP handshakes, the selected model can fail to invoke a tool.
+- The Python requirements check is a best-effort distribution presence check, not full dependency/version compatibility testing. Readiness is labeled accordingly.
+- No V9 patch is applied to the working browser/screenshot execution code in `src/agent_loop.py`.
+
+## V10: Skill-Aware Model Advisor and hardware auto-fit
+
+V10 extends the V9 Skill/MCP Manager without changing the verified V8
+browser-navigation and screenshot runtime. It recommends local **Ollama** text,
+code, or vision models based on each *imported* skill’s description/tool names,
+your RAM, available dedicated GPU memory when detectable, and the models already
+installed in Ollama. Importantly, **model advice is not an automatic download or
+chat-model switch**.
+
+### What the advisor checks
+
+- Reads `data/skills/imported/<skill-folder>/SKILL.md` without executing the skill.
+  Detects browser screenshots/vision, coding, research, general automation,
+  audio and image-generation workloads. Category inference is heuristic.
+- Detects system RAM, NVIDIA memory via `nvidia-smi`, AMD/DRM dedicated VRAM
+  from supported Linux sysfs devices, or Windows GPU names through CIM. On
+  Windows dedicated VRAM may remain **unknown** because CIM’s `AdapterRAM`
+  frequently overflows; unknown hardware is never labeled a GPU fit.
+- Reads the local Ollama `/api/tags` inventory, prioritizes already-installed
+  models, and scores estimated RAM/VRAM fit, approximate quality/size and
+  previous **local structured-tool probes**. No marketplace API credentials are
+  needed for read-only recommendations.
+- A bundled curated shortlist includes `qwen3-vl:2b`, `:4b`, `:8b`, `:30b`,
+  `qwen2.5-coder:3b`, `:7b`, `:14b`, `qwen3-coder:30b`, and `llama3.1:8b`.
+  The Qwen3-VL 8B browser screenshot flow has been verified during Zarzysseus
+  development; **other model/skill pairs are candidates, not verified outcomes**.
+- Treats audio transcription and image creation as specialized-backend tasks;
+  recommending a text LLM would *not* install an ASR or image generator.
+- Estimates model working memory from published approximate download sizes,
+  with a separate overhead factor. The estimate is **not benchmarked VRAM use**;
+  context window, quantization, multiple loaded models and GPU offload matter.
+
+### Linux CLI and TUI
+
+```bash
+./zarzysseus.sh model-advisor                 # general tool-calling models, read-only
+./zarzysseus.sh model-advisor <skill-folder>  # hardware-fit recommendations for imported skill
+./zarzysseus.sh model-advisor-json <skill-folder>  # JSON for integrations
+./zarzysseus.sh model-advisor-test qwen3-vl:8b  # harmless local tool-call proposal probe
+./zarzysseus.sh model-advisor-install <skill-folder> [catalog-model-id] # prompt before Ollama pull
+./zarzysseus.sh model-advisor-pin <skill-folder> qwen3-vl:8b # explicit advisory preference
+./zarzysseus.sh model-advisor-pins           # list stored preferences
+```
+
+Open **Skills.sh / Agent Skills → V10: Skill Model Advisor**, **V10: Model Tool-Call
+Test**, or **V10: Install a Recommended Model**. After importing a *new* skill
+via the Linux CLI/TUI, the installer prints the related V10 recommendation
+without downloading anything. `model-advisor-install` asks for confirmation;
+`model-advisor-pin` stores a suggestion but **does not force an Odysseus chat
+model or silently overwrite user-selected providers**.
+
+### Windows CLI and TUI
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 model-advisor <skill-folder>
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 model-advisor-json <skill-folder>
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 model-advisor-test qwen3-vl:8b
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 model-advisor-install qwen3-vl:8b
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 model-advisor-pin skill-folder=qwen3-vl:8b
+```
+
+On Windows choose **Skills → V10 Model Advisor / Test / Install**. The Windows
+single-argument `model-advisor-install` CLI accepts a skill folder *or* a
+catalog model ID; to specify both, use the interactive menu. Existing Windows
+native install and skill-discovery limitations from V9 still apply.
+
+### Verification, safety and files
+
+The V10 probe asks an **already installed** Ollama model to return a structured
+`diagnostic_ping(value=7)` proposal; it **never executes the tool**. A passing
+probe proves tool-call formatting only, *not* a working Odysseus MCP server,
+browser screenshot, application controller or multistep agent continuation.
+Results are persisted in `data/local/zarzysseus-model-v10-tests.json` and
+preferences in `data/local/zarzysseus-model-v10-prefs.json` with current-user
+permissions. These files are independent of V9’s MCP consent data.
+
+Only curated, cataloged model IDs can be auto-downloaded. Downloads require
+an explicit confirmation, and models conservatively judged unlikely to fit
+physical RAM are not automatically selected. On first installation test with
+`model-advisor-test`, then run an **actual Odysseus Agent chat** to verify
+MCP execution, visual interpretation and the UI. **V10 does not solve separate
+same-chat continuation problems.**
+
+Catalog references: [Ollama Qwen3-VL](https://ollama.com/library/qwen3-vl),
+[Qwen2.5-Coder](https://ollama.com/library/qwen2.5-coder),
+[Qwen3-Coder](https://ollama.com/library/qwen3-coder), and
+[Llama 3.1](https://ollama.com/library/llama3.1).
 
 ## Skill-declared MCP servers
 
