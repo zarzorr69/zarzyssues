@@ -14,8 +14,6 @@ Zarzysseus is a separate installer and management TUI for the upstream [Odysseus
 
 ## Agent reliability repair and diagnostics (Linux and Windows)
 
-## Agent Runtime Recovery V3 (2026-10-11)
-
 **Diagnosis of the reproduced failure:** Qwen3-VL 8B emitted reasoning-only streaming
 content without a native tool call in the full Odysseus Agent prompt (even though direct
 Ollama and the isolated Odysseus streaming adapter could make structured calls).
