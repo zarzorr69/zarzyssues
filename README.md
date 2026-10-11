@@ -6,9 +6,12 @@ Zarzysseus is a separate installer and management TUI for the upstream [Odysseus
 
 ## 🧭 Quick links
 
-**New here?** Start with the [first-run checklist](#first-run-checklist). **Something broken?** Jump straight to the [troubleshooting guide](#quick-start-and-troubleshooting).
+**New here?** Follow the **[guided TUI walkthroughs](#guided-walkthroughs-use-the-tui-first)** first — menu paths, what to select, what happens next, and how to verify success. Prefer the interactive menus; shell commands later in this README are optional diagnostics and advanced shortcuts. **Something broken?** Jump to the [troubleshooting guide](#quick-start-and-troubleshooting).
 
 ### 🚀 Install & get running
+
+> **📖 [Start here: illustrated TUI walkthroughs for every main feature →](#guided-walkthroughs-use-the-tui-first)**
+
 
 | Installation | First-time setup |
 | :--- | :--- |
@@ -56,9 +59,382 @@ Zarzysseus is a separate installer and management TUI for the upstream [Odysseus
 
 </details>
 
+## Guided walkthroughs: use the TUI first
+
+**You do not need to memorize terminal commands.** Zarzysseus is designed to be navigated interactively. The diagrams below represent **real menu labels in the V10.2 Linux and Windows scripts**; they are text guides, not screenshots. Menu wording may shorten on a narrow Linux terminal. Commands in later reference sections are for people who want automation or need deeper debugging.
+
+### Start the interactive menus
+
+| Linux (including Arch/CachyOS, Ubuntu and other supported distributions) | Windows PowerShell |
+| --- | --- |
+| Download `zarzysseus.sh`, open a terminal in its directory, and run `chmod +x ./zarzysseus.sh` once, then `./zarzysseus.sh`. | Download `zarzysseus.ps1`, open PowerShell in its directory, and run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1`. |
+| Use **↑ / ↓** or **j / k**, **Enter** to select, and **q / Esc** to go back. | Menus are numbered: enter the **number** at `Choose` and press **Enter**. The model picker has its own keyboard controls. |
+| On short terminals, menus scroll. Enlarging the terminal makes names easier to read. | Keep PowerShell open while a setup action is running; approve Windows/WinGet prompts when you intentionally requested them. |
+
+**How to read a path:** `MAIN MENU → SERVICE MANAGEMENT → SHOW STATUS` means enter the first menu, choose that item, then choose the next. The script can return from its full-screen menu to show installer output; wait for the result and the prompt to continue. **Inspect/status** actions are usually read-only; **Install/Start/Repair/Download/Enable/Remove** can change files, services, software or network exposure.
+
+<details open>
+<summary><strong>🗺️ Linux main-menu map (open this first)</strong></summary>
+
+```text
+ZARZYSSEUS MAIN MENU
+│
+├── INSTALL / UPDATE               Install stack, OS-update toggle, GPU/MLX
+├── SERVICE MANAGEMENT            Start/stop, auto-start, status, network
+├── MODEL RUNTIMES                Ollama / vLLM / SGLang / MLX downloads
+├── MODEL MANAGER / HARDWARE FIT  Rank, manually browse, set default
+├── OLLAMA MANAGEMENT             Service, models, sync, tool health
+├── MLX-LM MANAGEMENT             Apple/MLX backend where supported
+├── HUGGING FACE / MODEL FILES    Access token, model files, repairs
+├── SKILLS.SH / AGENT SKILLS      Search, install, manage, V9, V10
+├── MCP / FREEMCP                 Browser MCP, connections, registry
+├── DIAGNOSTICS / TOOLS / ADVANCED  Repairs, accelerator, endpoints
+├── NETWORK DISCOVERABILITY      Local-only vs LAN listener
+└── EXIT
+```
+
+**Windows uses a different numbered main menu**; see the [Windows navigation map](#windows-guided-menu-map-and-feature-paths) below instead of trying to follow Linux-only nested paths.
+
+</details>
+
+### First run: from download to a working chat (Linux)
+
+```text
+MAIN MENU
+  └── INSTALL / UPDATE
+       ├── AUTO FULL OS UPDATE: ON/OFF    ← review this BEFORE installing
+       └── INSTALL / UPDATE ZARZYSSEUS STACK
+            ├── AUTO FIT: TEXT + VIDEO + PHOTO + AUDIO
+            ├── AUTO FIT: TEXT  (and other combinations)
+            ├── PERSONAL FAVE TEXT MODELS
+            ├── PERSONAL FAVE SKILLS
+            ├── REALLY LOW SPEC ...
+            └── MANUAL MODEL SELECTION
+```
+
+1. Launch `./zarzysseus.sh` and select **INSTALL / UPDATE**. Check **AUTO FULL OS UPDATE**: toggle it **OFF** if you do not want the optional full operating-system update. This choice is persistent; it is different from installing just the application dependencies.
+2. Select **INSTALL / UPDATE ZARZYSSEUS STACK**. Choose the content profile you actually want (for a first chat, a **TEXT** auto-fit profile is sufficient); you can add other modalities later. **Attention:** the profile selector has a **30-second idle timer** that defaults to the full text/video/photo/audio profile. Make your selection rather than leaving it untouched.
+3. Review the installer output and approve only the requested dependencies you intend to use. Docker/ChromaDB, GPU backends and larger model downloads may take time. Opening the TUI itself does **not** install everything.
+4. Return to **SERVICE MANAGEMENT → SHOW STATUS**, then **START ZARZYSSEUS** if it is not running. Optionally choose **ENABLE AUTO-START**.
+5. Open `http://127.0.0.1:7000` in a browser on the host. In Odysseus, select an **installed** model from the chat model selector and send a simple question. For an action requiring tools, enable **Agent** before sending it.
+6. Need another model? Use [model browsing](#browse-install-and-select-a-model). Need a skill? Use [skill installation](#find-install-and-manage-skills). If something fails, consult the [symptom guide](#find-the-fix-for-your-symptom) instead of starting the entire installation again.
+
+### Everyday service management and network access
+
+```text
+MAIN MENU → SERVICE MANAGEMENT
+  ├── START / STOP / RESTART ZARZYSSEUS
+  ├── ENABLE / DISABLE AUTO-START
+  ├── SHOW STATUS
+  ├── REMOVE STARTUP SERVICE       (removes auto-start, not all models)
+  └── NETWORK DISCOVERABILITY
+       ├── LOCALHOST ONLY (127.0.0.1)
+       ├── LOCAL NETWORK / ALL INTERFACES (0.0.0.0)
+       └── SHOW CURRENT MODE AND LAN IP ADDRESSES
+```
+
+1. Choose **SHOW STATUS** to check the installation, then **START** or **RESTART** when appropriate; **STOP** deliberately takes down the UI.
+2. For normal daily use, choose **ENABLE AUTO-START**. To stop starting Odysseus at login, choose **DISABLE AUTO-START**.
+3. For a computer-only setup, enter **NETWORK DISCOVERABILITY → LOCALHOST ONLY** and browse to `http://127.0.0.1:7000`.
+4. For a *trusted* LAN, choose **LOCAL NETWORK / ALL INTERFACES**, then **SHOW CURRENT MODE AND LAN IP ADDRESSES**. From another trusted device, browse to `http://HOST_LAN_IP:7000` (substitute the actual address). `0.0.0.0` is a listener setting **not** a browser destination.
+5. LAN mode can expose Odysseus to any network that can route to the host. **Do not port-forward it to the public internet**; use localhost or a trusted private network and inspect firewall rules. [Security details](#network-discoverability-and-security-linux-and-windows).
+
+### Browse, install, and select a model
+
+```text
+MAIN MENU → MODEL MANAGER / HARDWARE FIT
+  ├── SHOW LOCAL MODEL PROVIDERS
+  ├── RANK MODELS (TABLE) / (JSON)
+  ├── AUTO-PICK PERFECT-FIT MODEL
+  ├── MANUAL MODEL PICKER
+  └── SET DEFAULT PROVIDER + MODEL
+
+MAIN MENU → OLLAMA MANAGEMENT
+  ├── START OLLAMA / SHOW STATUS / MODELS
+  ├── SYNC MODELS INTO ZARZYSSEUS
+  ├── TOOL CALLING HEALTH
+  └── PULL MODEL [opull / ollama-pull / pull]
+```
+
+1. Start with **MODEL MANAGER / HARDWARE FIT → RANK MODELS (TABLE)**. This estimates hardware suitability; it is **not** proof of runtime/tool compatibility.
+2. For a visual catalog, select **MANUAL MODEL PICKER**. Its on-screen controls include **Tab** to change families, **Shift+Tab** or **1–5** to select modality, **type to search**, **Space** to mark, **Enter** for details/selection, **Shift+I** to **INSTALL MARKED**, and **Esc** to return. Read the details and confirm before download. Some models are *files for another runtime*, not chat LLMs.
+3. To obtain a known Ollama chat model directly, go to **OLLAMA MANAGEMENT → PULL MODEL [opull]**, enter the model name (for example `llama3.1:8b`), then approve the download. Choose **SHOW STATUS / MODELS** when done.
+4. Use **SYNC MODELS INTO ZARZYSSEUS** if the new Ollama model does not appear inside Odysseus. If needed, choose **SET DEFAULT PROVIDER + MODEL** from Model Manager and enter the actual backend and installed model ID.
+5. Open the Odysseus browser UI and select the model in the **chat's model selector**. A default or advisory preference does **not** silently change an already open chat.
+
+**Which download menu should I use?**
+
+| Intent | Menu path | Important distinction |
+| --- | --- | --- |
+| Ollama text/vision model | `OLLAMA MANAGEMENT → PULL MODEL [opull]` | Managed Ollama download; select it in chat afterward |
+| Browse by hardware / type | `MODEL MANAGER / HARDWARE FIT → MANUAL MODEL PICKER` | Review category, model format and file size before confirming |
+| Alternate inference runtime | `MODEL RUNTIMES → Ollama / vLLM / SGLang / MLX-LM` | `vpull`, `spull` and `mpull` acquire assets; they do not guarantee that runtime is installed or compatible |
+| Hugging Face checkpoint/files | `HUGGING FACE / MODEL FILES → DOWNLOAD MODEL [hf-pull]` | Downloading weights does not make them usable as an Odysseus chat model |
+| Skill-specific recommendation | `SKILLS.SH / AGENT SKILLS → V10: SKILL MODEL ADVISOR` | Advice and hardware estimate; actual download is a separate approved action |
+
+### Ollama, runtime backends and MLX-LM
+
+```text
+MAIN MENU
+  ├── OLLAMA MANAGEMENT
+  │    ├── START / STOP / RESTART OLLAMA
+  │    ├── ENABLE / DISABLE AUTO-START
+  │    ├── SHOW STATUS / MODELS
+  │    ├── SYNC MODELS INTO ZARZYSSEUS
+  │    └── TOOL CALLING HEALTH
+  ├── MODEL RUNTIMES
+  │    ├── OLLAMA | opull
+  │    ├── VLLM   | vpull
+  │    ├── SGLANG | spull
+  │    └── MLX-LM | mpull
+  └── MLX-LM MANAGEMENT
+       ├── INSTALL / VERIFY MLX-LM
+       ├── SHOW MLX-LM STATUS
+       ├── PULL MODEL + START SERVER [mpull]
+       └── SET MLX-LM MODEL AS DEFAULT
+```
+
+1. If no model answers, check **OLLAMA MANAGEMENT → SHOW STATUS / MODELS** and **START OLLAMA** if necessary.
+2. Use **TOOL CALLING HEALTH** for general native-tool diagnostics. A healthy endpoint alone cannot prove any particular model follows browser instructions.
+3. Choose another **MODEL RUNTIMES** provider only if your operating system, GPU, drivers and the specific model architecture support that runtime. **MLX-LM targets compatible Apple Silicon environments**, not an ordinary AMD/NVIDIA Linux PC. vLLM/SGLang may require substantial GPU-specific prerequisites.
+4. Prefer the Ollama and hardware-fit menus for a first local chat. [Runtime reference](#linux-features).
+
+### Hugging Face access and model files
+
+```text
+MAIN MENU → HUGGING FACE / MODEL FILES
+  ├── SET / INSPECT / CLEAR HF TOKEN
+  ├── HF TOKEN STATUS
+  ├── CLEAR HF TOKEN
+  ├── DOWNLOAD MODEL [hf-pull]
+  ├── REPAIR COMPLETED HF DOWNLOAD
+  └── DOWNLOAD MODEL [model-install]
+```
+
+1. Choose **SET / INSPECT / CLEAR HF TOKEN** if you plan to download gated/private repos; create the token at Hugging Face and paste it only into the hidden installer prompt, **not** a public issue or chat log.
+2. Check **HF TOKEN STATUS**. For public models, a token is often unnecessary.
+3. Choose **DOWNLOAD MODEL [hf-pull]**, enter the exact `organization/model` ID, and optionally enter a filename filter. The menu handles the download; you do not need to paste a shell command.
+4. If a download is complete on disk but Cookbook fails to recognize it, select **REPAIR COMPLETED HF DOWNLOAD** and enter that repo ID.
+5. Use **CLEAR HF TOKEN** to revoke the local saved token when no longer needed. For `401`/`403` errors, also confirm that your Hugging Face account actually has access to any gated repo. [HF guidance](#recommended-first-time-setup-hugging-face-linux-and-windows).
+
+### Find, install and manage skills
+
+```text
+MAIN MENU → SKILLS.SH / AGENT SKILLS
+  ├── PERSONAL FAVE SKILLS
+  │    ├── ALL LOCAL / OFFICE / PHOTO / VIDEO / SCRIPTING / TRANSCRIPTION
+  │    └── RUNCOMFY PHOTO / VIDEO (requires account authorization)
+  ├── SEARCH SKILLS.SH + INSTALL RESULT
+  ├── INSTALL BY NAME / LINK / GITHUB REPO
+  ├── MANAGE INSTALLED SKILLS
+  │    ├── LIST / DETAILS / SYNC / UPDATE ONE OR ALL
+  │    └── REMOVE / VIEW, SET OR RESET PERMISSIONS
+  ├── SKILLS DEPENDENCY FIXER (LIVE HEALTH + F TO FIX)
+  ├── FIX ALL SKILLS (REPAIR EVERY INSTALLED SKILL)
+  └── SHOW SKILL SUMMARY
+```
+
+1. Start with **PERSONAL FAVE SKILLS** for curated local skills, or **SEARCH SKILLS.SH + INSTALL RESULT** to browse the public catalog. In the skills browser, **type a search**, use **↑ / ↓** to select, **← / →** for pages, and **Enter** to inspect and choose installation. An exact name/link/repository can instead be entered under **INSTALL BY NAME / LINK / GITHUB REPO**.
+2. **Review the skill and its source** before confirming. Skill code, package installs and MCP servers may execute third-party software.
+3. After import, use **MANAGE INSTALLED SKILLS → LIST INSTALLED SKILLS** to confirm the folder exists, and **SKILL DETAILS / SUMMARY** to inspect it.
+4. If requirements are missing, open **SKILLS DEPENDENCY FIXER**, inspect its live health view, and use its **F-to-fix** action only for the skill(s) you trust. **FIX ALL SKILLS** asks for an explicit `YES` and may change dependencies across every installed skill.
+5. To update or delete, use **MANAGE INSTALLED SKILLS → UPDATE ONE INSTALLED SKILL** or **REMOVE / UNINSTALL ONE SKILL**. For sensitive permissions, inspect **VIEW SKILL PERMISSIONS** before **SET ALLOWED-TOOLS PERMISSIONS**. [How permissions and execution work](#executable-skills-and-native-tool-routing).
+
+### Set up a skill's MCP tools safely (V9)
+
+```text
+MAIN MENU → SKILLS.SH / AGENT SKILLS
+  ├── V9: SKILLS + MCP HEALTH (READ-ONLY)
+  └── V9: APPROVE + PROVISION SKILLS / MCP
+```
+
+1. Install/import the skill using the previous walkthrough.
+2. Select **V9: SKILLS + MCP HEALTH**. Check its declared tools, missing dependencies, unregistered/disabled MCP servers and missing credentials. **This is inspection, not a live agent test.**
+3. Select **V9: APPROVE + PROVISION SKILLS / MCP**. Read the redacted installation plan. Type **YES** only if you trust the source and the requested executables/network hosts. New or changed MCP declarations require fresh approval.
+4. Run **V9: SKILLS + MCP HEALTH** again. If a server still reports unregistered, disabled, or a failed handshake, address that item before asking the model to use the skill.
+5. In Odysseus **Agent** mode, select a tool-capable model and attempt a harmless skill operation. A successful handshake alone does **not** mean the model will call the tool. [V9 readiness details](#v9-unified-skill-installation-mcp-consent-and-tool-health).
+
+### Pick and test a model for a skill (V10)
+
+```text
+MAIN MENU → SKILLS.SH / AGENT SKILLS
+  ├── V10: SKILL MODEL ADVISOR (HARDWARE AUTO-FIT)
+  ├── V10: MODEL TOOL-CALL TEST (NO TOOLS EXECUTED)
+  └── V10: INSTALL A RECOMMENDED MODEL (ASK FIRST)
+```
+
+1. Select **SKILL MODEL ADVISOR**, then enter the imported skill's **folder name** (or leave blank for general recommendations). Compare installed models, RAM/VRAM estimates, capability fit and test status.
+2. For a currently **installed** Ollama model, select **MODEL TOOL-CALL TEST** and enter its model ID. The test asks for a harmless *synthetic* structured call; **no actual tool is executed**.
+3. To download a suggestion, select **INSTALL A RECOMMENDED MODEL**, enter the skill folder or leave blank, and optionally enter a specific catalog model ID. Review the size and confirmation prompt; nothing is silently downloaded.
+4. Finally select the desired model in Odysseus's chat and exercise the *real* skill. The advisor can recommend `qwen3-vl:8b` for browser/vision work, but compatibility varies across models; do not mistake a model probe for verified screenshot interpretation. [Advisor limits](#v10-skill-aware-model-advisor-and-hardware-auto-fit).
+
+### MCP and FreeMCP: make browser/tools available
+
+```text
+MAIN MENU → MCP / FREEMCP
+  ├── SET UP / REPAIR MCP STACK
+  ├── MCP HEALTH / CONFIGURED SERVERS
+  ├── FREEMCP: SYNC / UPDATE REGISTRY
+  ├── FREEMCP: REGISTRY STATUS
+  ├── FREEMCP: SEARCH PUBLIC REGISTRY
+  ├── FREEMCP: LOGIN
+  └── INSTALL / UPGRADE QWEN MCP ROUTING GUARD
+```
+
+1. Start with **MCP HEALTH / CONFIGURED SERVERS** to check built-in browser MCP, Python MCP SDK and other configured servers.
+2. If a required component is missing, choose **SET UP / REPAIR MCP STACK**. It can repair/cache Playwright and MCP dependencies. Let the process finish, then rerun **MCP HEALTH**.
+3. For discovery, choose **FREEMCP: SYNC / UPDATE REGISTRY** and then **FREEMCP: SEARCH PUBLIC REGISTRY**. Enter a task keyword such as `spreadsheet`. The registry is an **index**, not proof that any listed remote MCP server is trustworthy or installed.
+4. **FREEMCP: LOGIN** is optional. Search does not require account login; discovery alone does **not** deploy or trust a server.
+5. Only if routing diagnostics identify a problem, use **INSTALL / UPGRADE QWEN MCP ROUTING GUARD** or the dedicated Agent repair menu. [MCP reference](#mcp-runtime-built-ins-and-freemcp).
+
+### Diagnose Agent mode and browser screenshots
+
+```text
+MAIN MENU → DIAGNOSTICS / TOOLS / ADVANCED
+  └── AGENT DIAGNOSTICS / REPAIR / ROLLBACK
+       ├── DIAGNOSE AGENT + WEB/BROWSER TOOL ROUTING
+       ├── RUN SAFE ROUTING SMOKE TEST
+       ├── REPAIR ROUTING + THINKING-ONLY RECOVERY + RESTART
+       ├── ROLL BACK AGENT V3 + V2/V1 PATCHES
+       ├── MCP / BROWSER SERVER HEALTH
+       └── SET UP / REPAIR MCP + PLAYWRIGHT BROWSER
+```
+
+1. Select **DIAGNOSE AGENT + WEB/BROWSER TOOL ROUTING**, then **MCP / BROWSER SERVER HEALTH**. These reveal whether the browser tools and routing patches are present.
+2. Choose **RUN SAFE ROUTING SMOKE TEST** for source-level checks. If something is missing, choose **REPAIR ROUTING + THINKING-ONLY RECOVERY + RESTART**; this alters guarded agent source code and may restart Odysseus. **Do not choose Roll Back just to diagnose a problem.**
+3. In the Odysseus web UI, start an **Agent** chat, select a capable model, and ask: `Open https://example.com, take a screenshot, and show it.` Approve the browser navigation if prompted.
+4. Expand the `browser_take_screenshot` tool event in the chat process panel. The screenshot can appear **inside that tool card**, not necessarily inline with the assistant's final prose.
+5. If no tool was called, consult [browser troubleshooting](#browser-tools-or-screenshots-arent-working) and runtime logs. A model narrating a plan does not count as successful tool execution. The verified V8 screenshot path is intentionally retained by V10.2.
+
+### Diagnostics, GPU/accelerators, Docker and advanced endpoints
+
+```text
+MAIN MENU → DIAGNOSTICS / TOOLS / ADVANCED
+  ├── LINUX / DISTRO / INSTALLATION DISCOVERY
+  ├── ACCELERATOR STATUS / ACCELERATOR SETUP / REPAIR
+  ├── VLLM STATUS
+  ├── SAM MASK STATUS / SAM MASK INSTALL / REPAIR
+  ├── INSTALL TOOLS / GENERAL ZARZYSSEUS STATUS
+  ├── REGISTER OPENAI-COMPATIBLE ENDPOINT
+  ├── SHOW LOCAL MODEL PROVIDERS
+  ├── SET DEFAULT PROVIDER + MODEL
+  ├── SHOW FULL COMMAND HELP
+  └── AGENT DIAGNOSTICS / REPAIR / ROLLBACK
+```
+
+1. To inspect your system, choose **LINUX / DISTRO / INSTALLATION DISCOVERY** or **GENERAL ZARZYSSEUS STATUS**. For GPU support, choose **ACCELERATOR STATUS** *before* **ACCELERATOR SETUP / REPAIR** (which can install or change drivers/libraries).
+2. Use **VLLM STATUS** to diagnose that separate backend; **SAM MASK STATUS** checks the relevant Cookbook feature, while **SAM MASK INSTALL / REPAIR** can install its dependencies.
+3. For an existing external OpenAI-compatible server, choose **REGISTER OPENAI-COMPATIBLE ENDPOINT**, supply an endpoint ID, display name, actual base URL, optional model and whether it supports native tool calls. Verify the URL and your network trust before saving it.
+4. Choose **SET DEFAULT PROVIDER + MODEL** only when you know the target backend/model is installed and reachable. **SHOW FULL COMMAND HELP** lists more optional CLI-only operations.
+5. Need Docker/ChromaDB? A *committed install* offers provisioning; check [Docker setup](#docker-and-chromadb-setup-linux-and-windows). Do not run full OS/GPU updates simply to fix a Cookbook progress bar.
+
+### Cookbook: one-click models and clean download progress (in the web UI)
+
+**Cookbook is a tab inside the Odysseus web application, not a Zarzysseus terminal menu.** Open Odysseus at `http://127.0.0.1:7000`, then click **Cookbook** in the left sidebar.
+
+```text
+ODYSSEUS WEB UI → Cookbook
+  ├── Download → Scan / Download
+  │    ├── Choose hardware-fitted model
+  │    └── Download             (no GGUF link to paste for supported entries)
+  ├── Active → Download task
+  │    ├── Progress bar
+  │    └── Show logs            (optional troubleshooting)
+  ├── Launch → Installed models / run options
+  └── Dependencies / Settings
+```
+
+1. Go to **Download → Scan / Download**, inspect a model's actual format, runtime and hardware-fit label, then click its **Download** button.
+2. Switch to **Active** to watch progress. V10.2 provides a compact indicator; use **Show logs** only when necessary. You may see *file count* progress rather than byte progress, depending on what the backend reports.
+3. When the task completes, use **Launch** if the selected model has a **supported installed backend**. A completed Hugging Face download does not mean that every architecture is runnable through llama.cpp/Ollama; for example, specialized audio models may require vLLM.
+4. If Cookbook complains about a missing GGUF source, use the [one-click routing fix](#cookbook-one-click-download-and-runtime-routing). If the progress view is still cluttered, use the [V10.2 progress fix](#cookbook-clean-live-download-progress-v102). These **repairs are CLI-only** in the current Zarzysseus menu and may require restarting Odysseus; the normal model download is entirely GUI-driven.
+
+### Personal favorites, low-spec modes and manual installation
+
+```text
+MAIN MENU → INSTALL / UPDATE → INSTALL / UPDATE ZARZYSSEUS STACK
+  ├── PERSONAL FAVE TEXT MODELS
+  ├── PERSONAL FAVE SKILLS
+  ├── REALLY LOW SPEC — L.P.S. + DESERT ANT LABS
+  │    ├── L.P.S. — TEXT / PHOTO / VIDEO / AUDIO GENERATION
+  │    ├── DESERT ANT LABS — SPECIALIST TASK MODELS
+  │    └── MANUAL MODEL PICKER
+  └── MANUAL MODEL SELECTION
+```
+
+1. Select **PERSONAL FAVE TEXT MODELS** to choose from the maintainer's list, or **PERSONAL FAVE SKILLS** to install supported local Office, editing, scripting or transcription tools.
+2. On modest hardware, choose **REALLY LOW SPEC** and distinguish **L.P.S.** model suggestions from **DESERT ANT LABS** specialist utilities. Desert Ant entries are not interchangeable with text/image/video generators; some tools/platforms may be unsupported.
+3. Use **MANUAL MODEL SELECTION** if you want full control over family/type/format rather than an auto-fit bundle. Review the selection screen and confirm each download before installing.
+4. Only choose **RUN SYSTEM UPDATE NOW**, **REPAIR ACCELERATOR STACK**, **INSTALL / VERIFY MLX-LM**, or **UNINSTALL ZARZYSSEUS** when you actually intend those system-level changes. Uninstall requires typing `UNINSTALL` and can remove the managed checkout/services.
+
+### Windows: guided menu map and feature paths
+
+The Windows edition uses **numbers**, not the Linux nested menu, and does **not** offer identical marketplace/backend coverage. Launch its PowerShell script as shown [above](#start-the-interactive-menus). For example:
+
+```text
+ZARZYSSEUS / WINDOWS
+  1  Install / Update native Windows Odysseus
+  2  Start server         3  Stop server        4  Status
+  5  Manual model browser
+  6  Ollama setup         7  Skills / Fix All   8  Hugging Face setup
+  9  Accelerator status  10 Enable startup    11 Disable startup
+  12 Update checkout     13 Network          14 Agent workspace
+  15 Start ChromaDB      16 Sync Ollama       17 Tool-calling health
+  18 Qwen routing guard  19 Docker+ChromaDB  20 MCP / FreeMCP
+  21 Chat continuity     22 Cookbook repairs 23 Agent Doctor
+  24 Agent Repair        25 Agent smoke test 26 Agent rollback
+  0  Exit
+```
+
+| Task | Windows steps (`Choose` number → Enter) | What to look for |
+| --- | --- | --- |
+| Install & open app | **1** Install/Update → **4** Status → **2** Start | `http://127.0.0.1:7000` loads |
+| Manage startup | **10** Enable or **11** Disable | Managed process/service behavior confirmed |
+| Install a model | **5** Model browser → Tab to choose family → `1–5` type → **Space** mark → **I** install → confirm | Selected model downloaded; no silent installation |
+| Set up Ollama | **6** Ollama setup → **16** Sync Ollama → **17** Tool health | Model appears in Odysseus selector; choose it in chat |
+| Hugging Face | **8** Hugging Face setup | Token configured only if needed for repository access |
+| Windows prerequisites / Docker | **9** Accelerator info; **19** Docker Desktop + ChromaDB; **15** ChromaDB only | WSL2/virtualization/admin steps completed when required |
+| LAN vs localhost | **13** Network → **1** Localhost / **2** LAN / **3** addresses | Access limited to networks you trust |
+| Default Agent workspace | **14** Agent workspace | Project checkout used for first Agent workspace where supported |
+| Same-chat continuity | **21** Continuity repair/check | Current chat is retained; not a cross-chat memory feature |
+| Cookbook GUI repair | **22** Cookbook reliability; progress-specific CLI described [here](#cookbook-clean-live-download-progress-v102) | Normal one-click Cookbook **Download** and **Active** flow |
+| Agent/browser reliability | **23** Doctor → **25** smoke test → **24** repair *only if needed* | `browser_navigate` and screenshot tool events actually execute |
+| Other MCPs | **20** MCP / FreeMCP → **2** Health → **1** Setup only when needed | Server connected and tool exists |
+
+**Windows skill walkthrough:** choose **7 Skills / Fix All**, then:
+
+```text
+SKILLS (WINDOWS)
+  [1] Fave Skills          [2] Fix All       [3] List
+  [4] Repair Tool Routing  [5] V9 Health     [6] V9 Setup
+  [7] V10 Model Advisor    [8] V10 Test Tool Call
+  [9] V10 Install Model    [0] Back
+```
+
+1. Use **1** to install the bundled favorite skills, **3** to inspect them, and **5** to audit dependencies/MCP declarations.
+2. Use **6** to review and explicitly approve V9 setup; use **2 Fix All** only if you really want to repair *every* installed skill.
+3. Use **7** for model advice (enter an imported skill folder or leave blank), **8** for a harmless tool-call formatting test, and **9** to review an optional model download. Pick the model in Odysseus afterward.
+4. The Windows MCP submenu (main menu **20**) also offers provisioning of declared skill MCP servers and compact tool-JSON repair. This is **not** a complete Windows implementation of Linux's live skills.sh search/install marketplace. [Windows support table](#windows-support).
+
+### Quick troubleshooting from the menus
+
+| Symptom | Go here first | If still broken |
+| --- | --- | --- |
+| Webpage does not load | Linux: **SERVICE MANAGEMENT → SHOW STATUS**; Windows: **4 Status** | Try Start; inspect [startup diagnostics](#app-or-web-ui-wont-open) |
+| Model unavailable | Linux: **OLLAMA MANAGEMENT → SHOW STATUS / MODELS**; Windows: **6 Ollama setup** | [Model checklist](#ollama-or-a-model-is-missing) |
+| Skill has missing tools | Linux: **SKILLS → V9 Health**; Windows: **7 Skills → 5 V9 Health** | Approve V9 Setup only after reviewing source |
+| Browser screenshot fails | Linux: **DIAGNOSTICS → Agent diagnostics → Diagnose**; Windows: **23 Agent Doctor** | [Actual tool-event debugging](#browser-tools-or-screenshots-arent-working) |
+| Missing browser MCP | Linux: **MCP / FREEMCP → MCP Health**; Windows: **20 MCP → 2 Health** | Use MCP Setup, then recheck |
+| Cookbook download unclear | Odysseus web UI: **Cookbook → Active → Show logs** | [One-click](#cookbook-one-click-download-and-runtime-routing) / [progress](#cookbook-clean-live-download-progress-v102) repairs |
+| Chat loses earlier messages | Remain in one Odysseus chat; Windows: **21 Continuity** | [Linux CLI-only continuity check](#follow-ups-lose-their-context) |
+
+> **Privacy and safety:** Do not paste Hugging Face tokens, MCP API keys or private server URLs in public issue reports. A skill's `SKILL.md` is an instruction/dependency declaration, **not** proof that its external code is safe. Always review download size, external executables, runtime compatibility and approval requests before installing. When a step is not present in a menu (for example Cookbook progress-source repair on Linux), the linked reference section explicitly identifies its CLI fallback.
+
+---
+
 ## Quick start and troubleshooting
 
-New to Zarzysseus? Follow the checklist first. If something fails, use the **symptom → diagnosis → fix** links below rather than reinstalling the entire stack. Run commands from the directory containing your downloaded `zarzysseus.sh` or `zarzysseus.ps1` (or use their full paths). All examples assume the standard filenames.
+New to Zarzysseus? Start with the [TUI walkthroughs](#guided-walkthroughs-use-the-tui-first), then use this checklist to verify results. If something fails, use the **symptom → diagnosis → fix** links below rather than reinstalling the entire stack. Run commands from the directory containing your downloaded `zarzysseus.sh` or `zarzysseus.ps1` (or use their full paths). All examples assume the standard filenames.
 
 ### First-run checklist
 
