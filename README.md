@@ -24,6 +24,10 @@ Zarzysseus is a separate installer and management TUI for the upstream [Odysseus
 | 🐳 [Docker / ChromaDB problems](#docker-or-chromadb-isnt-ready) | 💬 [Agent follow-ups lose context](#follow-ups-lose-their-context) |
 | 🪟 [Windows setup hurdles](#windows-specific-setup-hurdles) | 🔑 [Hugging Face model / access problems](#recommended-first-time-setup-hugging-face-linux-and-windows) |
 
+**🍳 [Cookbook: one-click Download/Run shows missing GGUF source](#cookbook-one-click-download-and-runtime-routing)**
+
+**📊 [Cookbook: progress bar, status updates and Show logs](#cookbook-clean-live-download-progress-v102)**
+
 **🩺 [Full troubleshooting guide →](#quick-start-and-troubleshooting)** — diagnostics first, repairs only when needed.
 
 <details>
@@ -98,6 +102,28 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 model-a
 | Agent forgets your previous message in the same conversation | Check you're still in the same Agent chat | [Follow-ups lose context](#follow-ups-lose-their-context) |
 | Windows install blocked by PowerShell, WinGet, WSL 2, or reboot prompts | Terminal error + prerequisite status | [Windows-specific hurdles](#windows-specific-setup-hurdles) |
 | Hugging Face download says 401/403, gated/private, or model ID not found | Token, granted access and registry | [Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows) · [Model IDs](#ollama-vs-hugging-face-model-ids) |
+
+### Cookbook clean live download progress (V10.2)
+
+**Symptom:** Cookbook's **Active** panel shows a non-refreshing terminal dump of Hugging Face warnings, reconstruction output, or a changing percentage without a usable progress bar.
+
+**Fix:** Use `./zarzysseus.sh cookbook-fix progress` (Linux), or `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 cookbook-fix progress` (Windows). The repair alters the **Cookbook frontend only**, keeps downloads and status/error reporting unchanged, and retains the V10.1 one-click model routing. Restart Odysseus if the launcher does not do so, then hard-refresh the browser with **Ctrl+Shift+R**.
+
+Afterward, **Active** shows a compact live progress bar. File-completion percentages are labeled *of files*; byte-completion values are used when available. When the backend does not report reliable overall progress, the bar is animated without inventing a percentage. Detailed terminal output is initially collapsed; click **Show logs** only when debugging an error. Download polling remains active while the Active tab is visible, even with logs hidden.
+
+**Check/undo:** `./zarzysseus.sh cookbook-fix status`, or `./zarzysseus.sh cookbook-fix rollback-progress` to restore the prior UI from a SHA-256 checked backup. If Odysseus updated Cookbook's Javascript structure, the guard will refuse the patch rather than guessing. A new download may be needed to exercise the progress UI after restarting; existing download processes are not intentionally interrupted by the patch itself (the launcher may restart Odysseus).
+
+### Cookbook one-click download and runtime routing
+
+**Symptom:** Clicking **Download** in Cookbook's model list shows *No GGUF source is configured*, even though the model fits your VRAM. This is a model-format selection error, not a Hugging Face login issue. Do not search for a random similarly named GGUF repository.
+
+**Inspect before repairing:** `./zarzysseus.sh cookbook-fix status` on Linux, or `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 cookbook-fix status` on Windows.
+
+**Fix the GUI itself:** run `./zarzysseus.sh cookbook-fix` on Linux, or the same Windows launcher with `cookbook-fix`. The V10.1 compatibility guard corrects the native model/quantized-source distinction in Cookbook's **existing** Download and Run buttons, using the catalog's declared GGUF sources when they exist, without forcing users through Direct Download. Restart Odysseus as prompted and hard-refresh the Cookbook page (Ctrl+Shift+R). The repair checks upstream code signatures and refuses unknown layouts; it writes SHA-256-verified backups. Restore with `cookbook-fix rollback-oneclick` if needed.
+
+**Important limitations:** A quantization shown in a hardware-fit table does not prove an actual GGUF exists. For **mistralai/Voxtral-Mini-4B-Realtime-Arabic**, the official weights are native BF16, served as speech recognition through a **vLLM realtime** backend. Cookbook can download those weights with one click using the official repository, but clicking Run still requires a functioning compatible vLLM build and audio extras. It does **not** become a general text chat model. If vLLM is missing or cannot load on your GPU/ROCm install, downloading succeeds but serving cannot; check Cookbook → Dependencies. A compatibility patch must not promise support for every Hugging Face architecture.
+
+**Scope:** source routing, catalog labeling and download behavior. It does not modify the V8 Playwright/browser agent, install unsupported runtimes, silently pull additional models, or bypass access restrictions. The Windows launcher includes the same guarded patch, but the local vLLM runtime is Linux-oriented; using Windows native may require WSL2 or a remote Linux server.
 
 ### App or web UI won't open
 

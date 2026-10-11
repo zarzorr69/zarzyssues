@@ -11416,12 +11416,437 @@ backup_dir.mkdir(parents=True,exist_ok=True); backup=backup_dir/(path.name+'.'+d
 fd,tmp=tempfile.mkstemp(prefix='.zar-cookbook-',dir=str(path.parent)); os.close(fd); Path(tmp).write_text(updated,encoding='utf-8'); os.replace(tmp,path); print(f'    [installed] Cookbook completed-download status guard; backup: {backup}')
 PY_COOKBOOK_STATUS
 }
+# V10.1: native-weight Cookbook Download/Run routing; backups and rollback kept by helper.
+cookbook_oneclick_v10_1() {
+    local operation="${1:-install}"
+    local helper_file="$PROJECT_DIR/data/local/zarzysseus_cookbook_oneclick_v10_1.py"
+    local python_bin="$VENV_DIR/bin/python"
+    [[ -x "$python_bin" ]] || python_bin="$(command -v python3 || true)"
+    [[ -n "$python_bin" ]] || { echo 'Cookbook V10.1 requires Python 3.' >&2; return 1; }
+    mkdir -p "$(dirname "$helper_file")" || return 1
+    cat > "$helper_file" <<'PY_CBOOK_NATIVE_V10_1'
+#!/usr/bin/env python3
+"""Zarzysseus V10.1 guarded Odysseus Cookbook source/runtime compatibility repair.
+
+Targets verified existing upstream JS shapes. Does NOT install runtimes or infer fake GGUF
+repositories. Applies files as one transaction with SHA-256 audited backups and rollback.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sys
+import tempfile
+import time
+
+MARKER = 'ZARZYSSEUS_COOKBOOK_NATIVE_ROUTING_V10_1'
+FILES = ('static/js/cookbook.js', 'static/js/cookbookDownload.js', 'static/js/cookbook-hwfit.js')
+MANIFEST = 'data/local/patch-backups/cookbook-native-routing-v10_1.json'
+
+
+def digest(raw):
+    return hashlib.sha256(raw).hexdigest()
+
+
+def replace_once(text, old, new, label):
+    count = text.count(old)
+    if count != 1:
+        raise ValueError(f'{label}: expected one known upstream anchor, found {count}; no files changed')
+    return text.replace(old, new, 1)
+
+
+def patch_core(text):
+    # Keep true GGUF, Ollama, AWQ/GPTQ/FP8 etc. on their existing backends.
+    # For plain HF repos with an estimated Q4 row but no GGUF source, download
+    # native weights with vLLM (or SGLang on ROCm for general text models).
+    # Voxtral Realtime is a supported vLLM realtime ASR model, not chat/GGUF.
+    anchor = "  // GGUF → llama.cpp/Ollama-compatible.\n  if (isGgufLike) {"
+    if anchor not in text:
+        # Alternate upstream whitespace/ASCII comment variants are handled only
+        # when the semantic anchor is unique and beside the known backend test.
+        matches = list(re.finditer(r'(?m)^(\s*)// GGUF .*\n\1if \(isGgufLike\) \{', text))
+        if len(matches) != 1:
+            raise ValueError('cookbook.js backend selection differs from verified upstream; no changes')
+        anchor = matches[0].group(0)
+    insert = '''   // ZARZYSSEUS_COOKBOOK_NATIVE_ROUTING_V10_1:
+   // A Q4_K_M *estimate* in hwfit is not evidence of GGUF weights. When
+   // no actual GGUF source exists, pick native HF weights instead of sending
+   // the user to Direct Download to guess a conversion repo.
+   const _zarHasGgufSource = (Array.isArray(model.gguf_sources) && model.gguf_sources.some(s => !!s?.repo))
+     || hasGgufFile;
+   const _zarGgufRepo = /(?:^|[-_/\\s.])gguf(?:$|[-_/\\s.])/i.test(`${_nm} ${model.quant_repo || ''}`);
+   const _zarHfRepo = /^[^\\s/]+\\/[^\\s/]+$/.test(String(model.name || ''));
+   const _zarVoxtralRealtime = /(?:^|\\/)voxtral-mini-4b-realtime-arabic$/i.test(String(model.name || ''));
+   if (_zarVoxtralRealtime) {
+     return { backend: 'vllm', label: 'vLLM · speech (native)' };
+   }
+   if (isGgufLike && !model.is_gguf && !_zarHasGgufSource && !_zarGgufRepo && _zarHfRepo
+       && /^(?:Q[2-8]|IQ[1-8])/.test(q)) {
+     if (isRocm) return { backend: 'sglang', label: 'SGLang · native weights' };
+     return { backend: 'vllm', label: 'vLLM · native weights' };
+   }
+'''
+    text = replace_once(text, anchor, insert + anchor, 'cookbook.js backend decision')
+    return text
+
+
+def patch_download(text):
+    anchor = "  const repo = backend === 'ollama'\n    ? (model.ollama || model.ollama_name || model.name)\n    : (ggufSource?.repo || model.quant_repo || model.name);"
+    replacement = '''   // ZARZYSSEUS_COOKBOOK_NATIVE_ROUTING_V10_1: do not download an
+   // imaginary quant repository for a native-weight HF model.
+   const _zarNative = backend !== 'ollama' && backend !== 'llamacpp' && !!model._zarNativeOnly;
+   const repo = backend === 'ollama'
+     ? (model.ollama || model.ollama_name || model.name)
+     : (_zarNative ? model.name : (ggufSource?.repo || model.quant_repo || model.name));'''
+    return replace_once(text, anchor, replacement, 'cookbookDownload.js source choice')
+
+
+def patch_hwfit(text):
+    anchor = '''export function _hwfitRenderList(el, models) {
+  if (!el) return;
+  models = _sortHwfitRows(models);'''
+    replacement = '''export function _hwfitRenderList(el, models) {
+   if (!el) return;
+   // ZARZYSSEUS_COOKBOOK_NATIVE_ROUTING_V10_1: fix catalog entries
+   // that advertise Q4_K_M estimates for native BF16 ASR checkpoints.
+   // This is a format correction, not a claim that vLLM is installed.
+   models = (Array.isArray(models) ? models : []).map(m => {
+     const name = String(m?.name || '');
+     if (/(?:^|\\/)voxtral-mini-4b-realtime-arabic$/i.test(name)) {
+       return { ...m, quant: 'BF16', quant_repo: null,
+         required_gb: Math.max(Number(m.required_gb) || 0, 10.5),
+         _zarNativeOnly: true };
+     }
+     const q = String(m?.quant || '').toUpperCase();
+     const knownSource = !!m?.is_gguf
+       || (Array.isArray(m?.gguf_sources) && m.gguf_sources.some(s => !!s?.repo))
+       || (Array.isArray(m?.gguf_files) && m.gguf_files.some(f => /\\.gguf$/i.test(String(f?.rel_path || ''))));
+     const namedGguf = /gguf/i.test(`${m?.quant_repo || ''} ${m?.repo_id || ''} ${name}`);
+     if (!knownSource && !namedGguf && /^(?:Q[2-8]|IQ[1-8])/.test(q)
+         && /^[^\\s/]+\\/[^\\s/]+$/.test(name)) {
+       return { ...m, quant: 'native', quant_repo: null,
+         required_gb: Math.max(Number(m.required_gb) || 0, (Number(m.params_b) || 0) * 2.2),
+         _zarNativeOnly: true };
+     }
+     return m;
+   });
+   models = _sortHwfitRows(models);'''
+    text = replace_once(text, anchor, replacement, 'cookbook-hwfit.js model listing')
+    # Special-case ASR: no general text chat endpoint, and native runtime support is required.
+    anchor = '''  if (modelData.is_image_gen) {
+    html += `<div style="font-size:10px;opacity:0.5;margin-top:4px;">'''
+    replacement = '''   if (/(?:^|\\/)voxtral-mini-4b-realtime-arabic$/i.test(String(modelData.name || ''))) {
+     // ZARZYSSEUS_COOKBOOK_NATIVE_ROUTING_V10_1
+     html += `<div class="hwfit-panel-note">Native BF16 Arabic speech-to-text checkpoint (not a general chat LLM). Download uses the official Hugging Face repository; Run requires vLLM with realtime audio support and a compatible GPU/runtime. GPU memory fit alone does not prove runtime readiness.</div>`;
+   } else if (modelData._zarNativeOnly) {
+     html += `<div class="hwfit-panel-note">No GGUF source exists in this catalog entry. One-click Download uses the original native Hugging Face weights; Run requires a compatible native-serving backend. The catalog quantization estimate is not an actual GGUF file.</div>`;
+   }
+   if (modelData.is_image_gen) {
+     html += `<div style="font-size:10px;opacity:0.5;margin-top:4px;">'''
+    return replace_once(text, anchor, replacement, 'cookbook-hwfit.js runtime notice')
+
+PATCHERS = dict(zip(FILES, (patch_core, patch_download, patch_hwfit)))
+
+
+def atomic_write(path, raw):
+    fd, temp = tempfile.mkstemp(prefix='.zar-cookbook-', dir=str(path.parent))
+    try:
+        with os.fdopen(fd, 'wb') as out:
+            out.write(raw)
+            out.flush()
+            os.fsync(out.fileno())
+        shutil.copymode(path, temp)
+        os.replace(temp, path)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
+def install(project):
+    manifest = project / MANIFEST
+    if manifest.exists():
+        return status(project)
+    original = {}
+    patches = {}
+    for rel in FILES:
+        path = project / rel
+        if not path.is_file():
+            raise ValueError(f'missing Cookbook file: {path} (no changes)')
+        raw = path.read_bytes()
+        text = raw.decode('utf-8')
+        if MARKER in text:
+            raise ValueError(f'{rel} already contains patch but manifest missing; refusing overwrite')
+        patched = PATCHERS[rel](text).encode('utf-8')
+        if patched == raw or MARKER not in patched.decode('utf-8'):
+            raise ValueError(f'{rel} failed required transformation (no changes)')
+        original[rel] = raw
+        patches[rel] = patched
+    # Pre-validated all files before any mutation. Backups are private and
+    # written before source changes. Manifest digest controls rollback.
+    backup_dir = manifest.parent / 'cookbook-native-v10_1'
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    records = []
+    for rel in FILES:
+        backup = backup_dir / Path(rel).name
+        if backup.exists() and backup.read_bytes() != original[rel]:
+            raise ValueError(f'existing backup collision: {backup}')
+        backup.write_bytes(original[rel])
+        records.append(dict(file=rel, before=digest(original[rel]), after=digest(patches[rel]), backup=str(backup.relative_to(project))))
+    applied = []
+    try:
+        for rel in FILES:
+            atomic_write(project / rel, patches[rel])
+            applied.append(rel)
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp = tempfile.mkstemp(prefix='.zar-cb-manifest-', dir=str(manifest.parent))
+        with os.fdopen(fd, 'w', encoding='utf-8') as out:
+            json.dump(dict(version='V10.1', marker=MARKER, files=records), out, indent=2)
+        os.replace(temp, manifest)
+    except Exception:
+        for rel in reversed(applied):
+            atomic_write(project / rel, original[rel])
+        raise
+    print('Cookbook V10.1: installed; corrected catalog source/runtime routing and native-weight download.')
+    print(f'Backup manifest: {manifest}')
+    return 0
+
+
+def status(project):
+    manifest = project / MANIFEST
+    if not manifest.exists():
+        print('Cookbook V10.1: not installed')
+        return 2
+    record = json.loads(manifest.read_text(encoding='utf-8'))
+    valid = True
+    for item in record['files']:
+        p = project / item['file']
+        good = p.is_file() and digest(p.read_bytes()) == item['after']
+        print(f"{'OK' if good else 'CHANGED'}: {item['file']}")
+        valid &= good
+    return 0 if valid else 3
+
+
+def rollback(project):
+    manifest = project / MANIFEST
+    if not manifest.is_file():
+        raise ValueError('not installed; no rollback manifest')
+    data = json.loads(manifest.read_text(encoding='utf-8'))
+    for entry in data['files']:
+        path = project / entry['file']
+        backup = project / entry['backup']
+        if not path.is_file() or digest(path.read_bytes()) != entry['after']:
+            raise ValueError(f'{path} modified since repair; refusing unsafe rollback')
+        if not backup.is_file() or digest(backup.read_bytes()) != entry['before']:
+            raise ValueError(f'{backup} missing or altered; refusing rollback')
+    for entry in data['files']:
+        atomic_write(project / entry['file'], (project / entry['backup']).read_bytes())
+    manifest.unlink()
+    print('Cookbook V10.1: safely rolled back to original verified sources.')
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('action', choices=('install', 'status', 'rollback'))
+    ap.add_argument('--project', type=Path, required=True)
+    args = ap.parse_args()
+    project = args.project.expanduser().resolve()
+    if not project.is_dir():
+        ap.error(f'missing Odysseus checkout: {project}')
+    try:
+        return {'install':install, 'status':status, 'rollback':rollback}[args.action](project)
+    except (ValueError, OSError, UnicodeError, KeyError) as ex:
+        print(f'Cookbook V10.1: {ex}', file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+PY_CBOOK_NATIVE_V10_1
+    "$python_bin" "$helper_file" "$operation" --project "$PROJECT_DIR"
+}
+
+# V10.2: isolated visual download-progress repair. Preserves V10.1 one-click routing.
+cookbook_progress_v10_2() {
+    local mode="${1:-install}" py="$VENV_DIR/bin/python"
+    [[ -x "$py" ]] || py="$(command -v python3 || true)"
+    [[ -n "$py" ]] || { echo 'Python3 required for Cookbook V10.2' >&2; return 1; }
+    local helper_file="$PROJECT_DIR/data/local/zarzysseus_cookbook_progress_v10_2.py"
+    mkdir -p "$(dirname "$helper_file")" || return 1
+    cat > "$helper_file" <<'PY_CB_PROGRESS_V10_2'
+#!/usr/bin/env python3
+"""V10.2: guarded Cookbook task progress UI repair. Affects display/polling only.
+
+Installs into Odysseus static/js/cookbookRunning.js with SHA256 backups. No
+backend/model/download command changes. Does not depend on runtime network.
+"""
+import argparse, hashlib, json, os, pathlib, tempfile, sys
+P='static/js/cookbookRunning.js'
+M='data/local/patch-backups/cookbook-progress-v10_2.json'
+MARKER='ZARZYSSEUS_COOKBOOK_PROGRESS_V10_2'
+
+def sha(data):return hashlib.sha256(data).hexdigest()
+def change(t,old,new,label):
+    n=t.count(old)
+    if n!=1:raise ValueError(f'{label}: upstream anchor count {n}, expected 1; no changes made')
+    return t.replace(old,new,1)
+
+# Inserted in module scope. Renders a compact bar even if the raw tmux logs are
+# hidden; reports count-based progress distinctly from aggregate transfer bytes.
+JS=r'''
+// ZARZYSSEUS_COOKBOOK_PROGRESS_V10_2 — private UI only; no backend changes.
+const _zarDlStyleId = 'zar-cookbook-download-progress-v10-2';
+function _zarDlStyle() {
+  if (document.getElementById(_zarDlStyleId)) return;
+  const css = document.createElement('style'); css.id = _zarDlStyleId;
+  css.textContent = `
+    .zar-dl-card {padding:12px 12px 11px;display:grid;gap:7px;border-top:1px solid rgba(160,180,200,.1)}
+    .zar-dl-line{display:flex;justify-content:space-between;gap:8px;align-items:baseline;font-size:12px;color:var(--fg-muted,#9da7b4)}
+    .zar-dl-title{color:var(--fg,#e8eaf0);font-weight:600}
+    .zar-dl-track{width:100%;height:9px;border-radius:999px;overflow:hidden;background:rgba(150,165,180,.17)}
+    .zar-dl-fill{height:100%;width:0;background:linear-gradient(90deg,#49a2ff,#4bd6a0);border-radius:999px;transition:width .35s ease}
+    .zar-dl-card[data-indeterminate="true"] .zar-dl-fill{width:30%;animation:zar-dl-move 1.4s ease-in-out infinite alternate}
+    .zar-dl-card[data-state="done"] .zar-dl-fill{background:#50c878;animation:none;width:100%}
+    .zar-dl-card[data-state="error"] .zar-dl-fill{background:#f26d6d;animation:none}
+    .zar-dl-logs{background:none;border:0;padding:0;text-align:left;color:var(--accent,#70bfff);font-size:11px;cursor:pointer;width:max-content}
+    .zar-dl-logs:hover{text-decoration:underline}
+    @keyframes zar-dl-move{from{transform:translateX(0)}to{transform:translateX(230%)}}
+    @media (prefers-reduced-motion:reduce){.zar-dl-fill{transition:none!important;animation:none!important}}
+  `; document.head.appendChild(css);
+}
+function _zarDlParse(raw) {
+  const lines = String(raw || '').replace(/\x1b\[[0-9;]*[A-Za-z]/g,'').replace(/\r/g,'\n');
+  // Aggregate byte progress (HF Hub/hf_transfer). Prefer this over shard %.
+  const bytes = [...lines.matchAll(/Downloading\s*\(incomplete[^)]*\):\s*(\d{1,3})%/ig)];
+  const files = [...lines.matchAll(/Fetching\s+(\d+)\s+files:\s*(\d{1,3})%/ig)];
+  if (bytes.length) return { percent: Math.min(100,+bytes[bytes.length-1][1]), stage:'Transferring model weights', unit:'bytes' };
+  // HF aggregates finished files; this is not a byte-based percentage.
+  if (files.length) {
+    const x=files[files.length-1]; const pct=Math.min(100,+x[2]);
+    return {percent:pct, stage:`Downloading · ${x[1]} files`,unit:'files'};
+  }
+  const done = lines.includes('DOWNLOAD_OK');
+  if (done) return {percent:100,stage:'Download complete',unit:'complete'};
+  if (/Reconstructing\s*\(incomplete|Reconstructing/i.test(lines)) return {percent:null,stage:'Verifying downloaded files',unit:'phase'};
+  if (/Downloading bytes:/i.test(lines)) return {percent:null,stage:'Transferring model weights',unit:'phase'};
+  if (/Downloading|Fetching|FILE\s+/i.test(lines)) return {percent:null,stage:'Downloading model files',unit:'phase'};
+  return {percent:null,stage:'Connecting to download source',unit:'phase'};
+}
+function _zarDlSync(el, task, raw) {
+  if (!el || task?.type !== 'download') return;
+  _zarDlStyle();
+  let card=el.querySelector('.zar-dl-card');
+  if (!card) {
+    card=document.createElement('div'); card.className='zar-dl-card';
+    card.innerHTML=`<div class="zar-dl-line"><span class="zar-dl-title"></span><span class="zar-dl-pct"></span></div>
+      <div class="zar-dl-track" role="progressbar" aria-label="Model download progress"><div class="zar-dl-fill"></div></div>
+      <button class="zar-dl-logs" type="button">Show logs</button>`;
+    const log=el.querySelector('.cookbook-output-wrap');
+    if (log) log.parentNode.insertBefore(card,log); else el.appendChild(card);
+    card.querySelector('.zar-dl-logs').addEventListener('click',e=>{
+      e.stopPropagation();el.querySelector('.cookbook-task-header')?.click();
+      const hidden=el.querySelector('.cookbook-output-wrap')?.classList.contains('cookbook-task-collapsed');
+      card.querySelector('.zar-dl-logs').textContent=hidden?'Show logs':'Hide logs';
+    });
+  }
+  const status=task.status || el.dataset.status || 'running';
+  const failed=['error','failed','crashed','stopped'].includes(status);
+  const complete=['done','completed'].includes(status);
+  const p=_zarDlParse(raw);
+  let pct = complete ? 100 : p.percent;
+  if (pct != null && !complete && !failed) {
+    // A resumed download may print older and newer snapshots together; don't
+    // decrease the displayed value within the same task card.
+    pct=Math.max(pct,Number(card.dataset.lastPct || 0));
+    card.dataset.lastPct=String(pct);
+  }
+  card.dataset.state=failed?'error':(complete?'done':'running');
+  card.dataset.indeterminate=String(pct===null && !complete && !failed);
+  const heading=failed?'Download stopped':complete?'Download complete':status==='queued'?'Queued':p.stage;
+  card.querySelector('.zar-dl-title').textContent=heading;
+  card.querySelector('.zar-dl-pct').textContent=complete?'100%':(failed?'':(pct!==null?`${pct}%${p.unit==='files'?' of files':''}`:'Working…'));
+  const bar=card.querySelector('.zar-dl-track');
+  const fill=card.querySelector('.zar-dl-fill');
+  fill.style.width=pct!==null?`${pct}%`:'';
+  if(pct!==null)bar.setAttribute('aria-valuenow',String(pct));else bar.removeAttribute('aria-valuenow');
+  bar.setAttribute('aria-valuetext',heading);
+  card.querySelector('.zar-dl-logs').textContent=el.querySelector('.cookbook-output-wrap')?.classList.contains('cookbook-task-collapsed')?'Show logs':'Hide logs';
+}
+'''
+
+def patch(t):
+    if MARKER in t:raise ValueError('patch marker already present without verified manifest')
+    t=change(t,'function _downloadBadgeText(progress) {',JS+'\nfunction _downloadBadgeText(progress) {','helper insertion')
+    t=change(t,"      const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');",
+        "      _zarDlSync(el, task, task.output || el.querySelector('.cookbook-output-pre')?.textContent || '');\n      const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');",'existing card update')
+    t=change(t,"     const _waveEl = el.querySelector('.cookbook-task-wave');",
+        "     _zarDlSync(el, task, task.output || '');\n     const _waveEl = el.querySelector('.cookbook-task-wave');",'new card update')
+    t=change(t,"(_mobileCollapseDefault && !_shouldAutoExpandTaskOutput(task)) ? ' cookbook-task-collapsed' : ''",
+        "(task.type === 'download' ? !_expandedTaskIds.has(task.sessionId) : (_mobileCollapseDefault && !_shouldAutoExpandTaskOutput(task))) ? ' cookbook-task-collapsed' : ''",'default download log collapse')
+    t=change(t,"    const _streamExpanded = _wrapForStream && !_wrapForStream.classList.contains('cookbook-task-collapsed');",
+        "    const _streamExpanded = task.type === 'download' || (_wrapForStream && !_wrapForStream.classList.contains('cookbook-task-collapsed'));",'polling initial')
+    t=change(t,"  if (!_isRunningTabVisible() || !wrap || wrap.classList.contains('cookbook-task-collapsed')) return;",
+        "  if (!_isRunningTabVisible() || !wrap || (task.type !== 'download' && wrap.classList.contains('cookbook-task-collapsed'))) return;",'polling start')
+    t=change(t,"    if (!el.isConnected || !_isRunningTabVisible() || !liveWrap || liveWrap.classList.contains('cookbook-task-collapsed')) {",
+        "    if (!el.isConnected || !_isRunningTabVisible() || !liveWrap || (task.type !== 'download' && liveWrap.classList.contains('cookbook-task-collapsed'))) {",'polling while closed')
+    t=change(t,"        output.textContent = snapshot;",
+        "        output.textContent = snapshot;\n        _zarDlSync(el, task, snapshot);",'polling refresh')
+    # Closing the raw console must not abort a DOWNLOAD's progress polling.
+    t=change(t,"        if (el._abort) {\n          try { el._abort.abort(); } catch {}\n          el._abort = null;\n        }",
+        "        if (task.type !== 'download' && el._abort) {\n          try { el._abort.abort(); } catch {}\n          el._abort = null;\n        }",'log close behavior')
+    return t
+
+def atomic(path,raw):
+    fd,tmp=tempfile.mkstemp(prefix='.zar-cb-progress-',dir=str(path.parent))
+    try:
+        with os.fdopen(fd,'wb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
+        os.chmod(tmp,path.stat().st_mode);os.replace(tmp,path)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
+
+def run(project,action):
+    path=project/P; manifest=project/M
+    if action=='status':
+        if not manifest.exists():print('Cookbook compact progress V10.2: not installed');return 2
+        record=json.loads(manifest.read_text()); matched=path.is_file() and sha(path.read_bytes())==record['after'];
+        print('Cookbook compact progress V10.2:', 'INSTALLED' if matched else 'CHANGED; review before overwrite'); return 0 if matched else 3
+    if action=='install':
+        if manifest.exists():return run(project,'status')
+        if not path.is_file():raise ValueError(f'missing {path}')
+        old=path.read_bytes();new=patch(old.decode('utf-8')).encode('utf-8')
+        backup=manifest.parent/'cookbook-progress-v10_2.before.js';backup.parent.mkdir(parents=True,exist_ok=True)
+        if backup.exists() and backup.read_bytes()!=old:raise ValueError('backup conflict; refusing overwrite')
+        backup.write_bytes(old)
+        atomic(path,new)
+        manifest.write_text(json.dumps({'version':'V10.2','file':P,'before':sha(old),'after':sha(new),'backup':str(backup.relative_to(project))},indent=2)+'\n')
+        print('Cookbook V10.2: compact live download bars installed; raw logs available on demand; no download commands modified.')
+        return 0
+    if action=='rollback':
+        if not manifest.is_file():raise ValueError('not installed')
+        record=json.loads(manifest.read_text());back=project/record['backup']
+        if not path.is_file() or sha(path.read_bytes())!=record['after']:raise ValueError('current source differs from V10.2; refusing overwrite')
+        if not back.is_file() or sha(back.read_bytes())!=record['before']:raise ValueError('backup changed; refusing rollback')
+        atomic(path,back.read_bytes());manifest.unlink();print('Cookbook V10.2: restored original progress UI');return 0
+    raise ValueError('unknown mode')
+
+if __name__=='__main__':
+    ap=argparse.ArgumentParser();ap.add_argument('action',choices=['install','status','rollback']);ap.add_argument('--project',type=pathlib.Path,required=True)
+    a=ap.parse_args()
+    try:sys.exit(run(a.project.resolve(),a.action))
+    except (OSError,ValueError,UnicodeError,KeyError) as ex:print(f'Cookbook V10.2: {ex}',file=sys.stderr);sys.exit(1)
+PY_CB_PROGRESS_V10_2
+    "$py" "$helper_file" "$mode" --project "$PROJECT_DIR"
+}
+
 install_cookbook_reliability_fixes() {
     [[ "$ZARZYSSEUS_COOKBOOK_FIXES" == "1" ]] || { echo '    [skipped] Cookbook reliability fixes disabled'; return 0; }
-    info 'Checking Cookbook reliability bridge (no OS update)...'; install_cookbook_hf_retry_bridge || true; patch_cookbook_download_status || true; patch_cookbook_sam_mask_status_probe || true; patch_cookbook_sam_mask_recipe || true; bump_cookbook_frontend_cache || true
+    info 'Checking Cookbook reliability bridge (no OS update)...'; install_cookbook_hf_retry_bridge || true; patch_cookbook_download_status || true; patch_cookbook_sam_mask_status_probe || true; patch_cookbook_sam_mask_recipe || true; cookbook_oneclick_v10_1 install || echo '    [warning] Cookbook native model routing patch skipped or needs review'; cookbook_progress_v10_2 install || echo '    [warning] Cookbook visual progress patch skipped; check source version'; bump_cookbook_frontend_cache || true
     echo '    [ready] Cookbook repair path uses the Zarzysseus HF cache/retry policy and never invokes the system updater.'
 }
-cookbook_fix_status() { [[ -x "$COOKBOOK_BRIDGE_BIN_DIR/hf" ]] && echo 'Cookbook HF retry bridge: INSTALLED' || echo 'Cookbook HF retry bridge: not installed'; if [[ -f "$PROJECT_DIR/routes/cookbook_routes.py" ]] && grep -Fq 'ZARZYSSEUS_COOKBOOK_DOWNLOAD_STATUS_V1' "$PROJECT_DIR/routes/cookbook_routes.py"; then echo 'Cookbook DOWNLOAD_OK status guard: INSTALLED'; else echo 'Cookbook DOWNLOAD_OK status guard: upstream-fixed / not installed'; fi; echo 'Cookbook repair path: NO full OS update'; }
+cookbook_fix_status() { [[ -x "$COOKBOOK_BRIDGE_BIN_DIR/hf" ]] && echo 'Cookbook HF retry bridge: INSTALLED' || echo 'Cookbook HF retry bridge: not installed'; if [[ -f "$PROJECT_DIR/routes/cookbook_routes.py" ]] && grep -Fq 'ZARZYSSEUS_COOKBOOK_DOWNLOAD_STATUS_V1' "$PROJECT_DIR/routes/cookbook_routes.py"; then echo 'Cookbook DOWNLOAD_OK status guard: INSTALLED'; else echo 'Cookbook DOWNLOAD_OK status guard: upstream-fixed / not installed'; fi; echo 'Cookbook repair path: NO full OS update'; cookbook_oneclick_v10_1 status || true; cookbook_progress_v10_2 status || true; }
 
 patch_cookbook_sam_mask_status_probe() {
     [[ "$PATCH_COOKBOOK_SAM_MASK_RECIPE" == "1" ]] || return 0
@@ -16828,7 +17253,14 @@ case "$ACTION" in
         ;;
     cookbook-fix)
         application_installed || { echo "ERROR: Install Odysseus first."; exit 1; }
-        if [[ "${2:-}" == status ]]; then cookbook_fix_status; else install_cookbook_reliability_fixes; fi
+        case "${2:-}" in
+            status) cookbook_fix_status ;;
+            rollback-oneclick) cookbook_oneclick_v10_1 rollback ;;
+            progress) cookbook_progress_v10_2 install; bump_cookbook_frontend_cache || true ;;
+            rollback-progress) cookbook_progress_v10_2 rollback; bump_cookbook_frontend_cache || true ;;
+            '') install_cookbook_reliability_fixes ;;
+            *) echo 'Usage: cookbook-fix [status|progress|rollback-progress|rollback-oneclick]'; exit 2 ;;
+        esac
         if [[ "${2:-}" != status ]] && service_installed && service_systemctl is-active --quiet "$service_unit" 2>/dev/null; then service_systemctl daemon-reload; service_systemctl restart "$service_unit"; echo 'Zarzysseus restarted with Cookbook reliability fixes.'; fi
         ;;
     tool-health)
@@ -17422,7 +17854,7 @@ Usage:
   $0 repo-update        Fetch and fast-forward the existing Odysseus checkout; no OS upgrade
   $0 workspace-default [status]  Make the discovered/cloned checkout Agent's first-use workspace
   $0 chat-continuity-fix [status] Protect brand-new active sessions so follow-ups retain same-chat context
-  $0 cookbook-fix [status]   Repair Cookbook downloads/status using Zarzysseus retry/cache logic; never runs OS update
+  $0 cookbook-fix [status|progress|rollback-progress|rollback-oneclick]   Repair Cookbook downloads/status using Zarzysseus retry/cache logic; never runs OS update
   $0 system-auto-update [on|off|toggle|status] Persist the Install/Update full-OS-upgrade toggle
   $0 network-mode localhost|lan|status  Persist localhost or 0.0.0.0 binding; show LAN URLs
   $0 install             Clone (if needed), install, enable and start Zarzysseus
