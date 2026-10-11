@@ -6,11 +6,151 @@ Zarzysseus is a separate installer and management TUI for the upstream [Odysseus
 
 ## Quick links
 
-**Get started:** [Agent reliability & diagnostics](#agent-reliability-repair-and-diagnostics-linux-and-windows) · [Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows) · [Linux installation](#linux-installation) · [Windows installation](#windows-installation)
+**Installation & first run:** [Linux installation](#linux-installation) · [Windows installation](#windows-installation) · [First-run checklist](#first-run-checklist) · [Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows)
+
+**Something missing or not working?** [Start troubleshooting here](#quick-start-and-troubleshooting) · [App/UI won't start](#app-or-web-ui-wont-open) · [Ollama/model missing](#ollama-or-a-model-is-missing) · [Browser/screenshot failure](#browser-tools-or-screenshots-arent-working) · [Skills or MCP missing](#skills-or-mcp-tools-arent-available) · [Docker/ChromaDB missing](#docker-or-chromadb-isnt-ready) · [Chat loses context](#follow-ups-lose-their-context) · [Windows setup problems](#windows-specific-setup-hurdles)
 
 **Configure:** [Network access & security](#network-discoverability-and-security-linux-and-windows) · [Docker & ChromaDB](#docker-and-chromadb-setup-linux-and-windows) · [Linux OS-update toggle](#linux-full-os-update-toggle) · [Same-chat continuity & Cookbook](#same-chat-continuity-and-cookbook-reliability) · [MCP & FreeMCP](#mcp-runtime-built-ins-and-freemcp) · [V9 skill & MCP manager](#v9-unified-skill-installation-mcp-consent-and-tool-health) · [V10 skill-aware model advisor](#v10-skill-aware-model-advisor-and-hardware-auto-fit) · [Skill-declared MCP auto-setup](#skill-declared-mcp-servers) · [Tool-call JSON recovery](#local-model-json-tool-call-recovery) · [Executable skills](#executable-skills-and-native-tool-routing) · [Linux distribution support](#linux-distribution-support) · [Windows support](#windows-support) · [Ollama vs Hugging Face model IDs](#ollama-vs-hugging-face-model-ids)
 
-**Troubleshoot:** [Odysseus fixes & diagnostics](#odysseus-integration-fixes-and-diagnostics) · [Linux repair commands](#linux-repair-and-verify) · [Windows repair commands](#windows-repair-and-verify) · [Verify tool execution](#confirm-a-tool-was-actually-executed) · [Requirements](#requirements)
+**Advanced diagnostics:** [Agent reliability & browser repairs](#agent-reliability-repair-and-diagnostics-linux-and-windows) · [Odysseus fixes & diagnostics](#odysseus-integration-fixes-and-diagnostics) · [Linux repair commands](#linux-repair-and-verify) · [Windows repair commands](#windows-repair-and-verify) · [Verify tool execution](#confirm-a-tool-was-actually-executed) · [Requirements](#requirements)
+
+## Quick start and troubleshooting
+
+New to Zarzysseus? Follow the checklist first. If something fails, use the **symptom → diagnosis → fix** links below rather than reinstalling the entire stack. Run commands from the directory containing your downloaded `zarzysseus.sh` or `zarzysseus.ps1` (or use their full paths). All examples assume the standard filenames.
+
+### First-run checklist
+
+1. **Download and open the installer:** follow [Linux installation](#linux-installation) or [Windows installation](#windows-installation). Opening the TUI is not the same as installing Odysseus: choose its **Install / Update** action and confirm the components you actually want.
+2. **Let prerequisites finish:** native Python environment, Ollama, and any chosen model downloads need time and disk space. Docker/ChromaDB setup may need additional permissions; Windows Docker Desktop may need WSL 2 setup or a reboot. [Docker details](#docker-and-chromadb-setup-linux-and-windows).
+3. **Check the running app and model backend:** on Linux run `./zarzysseus.sh status` and `./zarzysseus.sh ollama-status`; on Windows use the PowerShell examples below. If Ollama is running but no model is installed, choose one using the TUI or the [V10 Model Advisor](#v10-skill-aware-model-advisor-and-hardware-auto-fit). **The advisor recommends models; it does not install or select one automatically.**
+4. **Open Odysseus:** on the host, try `http://127.0.0.1:7000` (default port; adjust if changed). For access from another device, read [Network access & security](#network-discoverability-and-security-linux-and-windows) first. Never use `0.0.0.0` as the URL.
+5. **Test Agent mode separately:** choose an installed tool-capable model, enable **Agent** mode, and request a harmless action. For browser screenshots, `qwen3-vl:8b` is a **tested** baseline; other models may vary. A tool listed in the UI is not proof that the model executed it. [Live browser test](#live-browser-test-navigation-screenshot-display).
+6. **Only when you need skills:** run `skills-doctor` to see what an imported skill needs, then `skills-setup` to **review and approve** declared dependencies/MCP servers. Never approve unknown third-party code or share secrets in logs. [V9 skill setup](#v9-unified-skill-installation-mcp-consent-and-tool-health).
+
+**Minimal read-only checks** (safe to run before any repairs):
+
+```bash
+# Linux, from the directory containing zarzysseus.sh
+./zarzysseus.sh status
+./zarzysseus.sh ollama-status
+./zarzysseus.sh mcp-health
+./zarzysseus.sh agent-doctor
+./zarzysseus.sh skills-doctor
+./zarzysseus.sh model-advisor
+```
+
+```powershell
+# Windows PowerShell, from the directory containing zarzysseus.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 status
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 ollama-status
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 mcp-health
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 skills-doctor
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 model-advisor
+```
+
+### Find the fix for your symptom
+
+| If you see... | First check | Next step |
+| --- | --- | --- |
+| Installer closes, Odysseus won't start, or the webpage won't load | `status` / user service logs | [App or web UI won't open](#app-or-web-ui-wont-open) |
+| `ollama` not found, no models in selector, or model won't answer | `ollama-status`, `ollama list` | [Ollama or a model is missing](#ollama-or-a-model-is-missing) |
+| Agent talks about opening a page but doesn't call the browser, or screenshot isn't displayed | `agent-doctor`, `mcp-health`, actual tool events | [Browser tools or screenshots](#browser-tools-or-screenshots-arent-working) |
+| A skill shows up but has no usable tools or an MCP server won't connect | `skills-doctor`, `mcp-health` | [Skills or MCP tools](#skills-or-mcp-tools-arent-available) |
+| Docker, ChromaDB, or vector-search services are absent | Docker readiness and ChromaDB heartbeat | [Docker or ChromaDB](#docker-or-chromadb-isnt-ready) |
+| Agent forgets your previous message in the same conversation | Check you're still in the same Agent chat | [Follow-ups lose context](#follow-ups-lose-their-context) |
+| Windows install blocked by PowerShell, WinGet, WSL 2, or reboot prompts | Terminal error + prerequisite status | [Windows-specific hurdles](#windows-specific-setup-hurdles) |
+| Hugging Face download says 401/403, gated/private, or model ID not found | Token, granted access and registry | [Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows) · [Model IDs](#ollama-vs-hugging-face-model-ids) |
+
+### App or web UI won't open
+
+**Linux — inspect first:**
+
+```bash
+./zarzysseus.sh status
+systemctl --user status odysseus.service --no-pager
+journalctl --user -u odysseus.service -n 80 --no-pager
+```
+
+If installed but stopped, run `./zarzysseus.sh start`. The `systemctl`/`journalctl` commands apply to the **managed user service**; if you launch Odysseus manually, read the terminal where you started it instead. The default local address is `http://127.0.0.1:7000`, not port 8000. If using a different computer, see [LAN mode and firewall guidance](#network-discoverability-and-security-linux-and-windows).
+
+**Windows — inspect first:**
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 status
+# If installed but stopped:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 start
+```
+
+A logged `Auto-name failed: Cannot reach http://127.0.0.1:8000` concerns an **auxiliary chat naming/utility route**; it does not by itself mean the main `:7000` web server or browser MCP is broken. See [integration diagnostics](#odysseus-integration-fixes-and-diagnostics) before changing the model endpoint.
+
+### Ollama or a model is missing
+
+```bash
+./zarzysseus.sh ollama-status  # check API/service
+ollama list                   # check downloaded model names (if Ollama CLI is installed)
+./zarzysseus.sh model-advisor  # read-only hardware/skill-fit recommendations
+```
+
+If Ollama is installed but stopped, run `./zarzysseus.sh ollama-start`. If no suitable model is installed, use the TUI's model browser or explicitly approve a download with `model-advisor-install`. After changing the local model inventory, `./zarzysseus.sh ollama-sync` can refresh Odysseus's Ollama configuration. On Windows, replace `./zarzysseus.sh` with `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1`. An installed model still needs to be **selected in the Odysseus chat**; a V10 model preference doesn't switch it for you. [V10 advisor details](#v10-skill-aware-model-advisor-and-hardware-auto-fit).
+
+### Browser tools or screenshots aren't working
+
+First choose **Agent** mode, verify the built-in browser MCP is enabled, and try a tool-capable vision model for screenshot **interpretation** (the screenshot itself can be captured without vision). On Linux:
+
+```bash
+./zarzysseus.sh agent-doctor  # read-only diagnostics
+./zarzysseus.sh mcp-health    # inspect MCP/runtime availability
+# Only if checks identify a missing/older browser routing repair:
+./zarzysseus.sh agent-repair  # modifies guarded source patches; may restart managed service
+```
+
+In a new Agent chat, try **“Open https://example.com, take a screenshot, and show it.”** Approve the requested action. Expand the `browser_take_screenshot` tool's process card: **the image may appear there instead of as a standalone assistant attachment**. Check for actual `Tool executed: ...browser_navigate` and `...browser_take_screenshot` success events; a model's reasoning text or an approval dialog alone does not prove execution. Linux logs:
+
+```bash
+journalctl --user -u odysseus.service --since '10 minutes ago' --no-pager \
+  | grep -Ei 'agent-debug|browser_navigate|browser_take_screenshot|Tool executed|approval|zarzysseus-agent-v[45678]' \
+  | tail -n 80
+```
+
+If navigation succeeds but the screenshot tool doesn't execute, inspect schema/approval messages. If the screenshot executes but the image is missing, inspect the result and UI rather than reinstalling Playwright. `model-advisor-test` tests **structured call formatting only**, not screenshots or visual understanding. [Browser execution stages](#live-browser-test-navigation-screenshot-display).
+
+### Skills or MCP tools aren't available
+
+```bash
+./zarzysseus.sh skills-doctor            # read-only inventory and missing requirements
+./zarzysseus.sh mcp-health               # read-only MCP status
+./zarzysseus.sh skills-setup             # review + explicitly approve declared setup
+```
+
+If `skills-doctor` reports a disabled or unregistered server, check the skill's **explicit MCP declaration**, its command/package and any required credentials. V9 will not infer a server that a skill didn't declare; native-only skills do not require one. A successful handshake is not the same as a successful Agent call—test the skill with a supported tool-capable model. Windows exposes the corresponding `skills-doctor` and `skills-setup` commands through `zarzysseus.ps1` as well. [V9 readiness meanings and approvals](#v9-unified-skill-installation-mcp-consent-and-tool-health).
+
+### Docker or ChromaDB isn't ready
+
+```bash
+./zarzysseus.sh status
+./zarzysseus.sh chromadb-start  # starts existing Compose service if Docker is available
+# Only if Docker/Compose is missing or unconfigured:
+./zarzysseus.sh docker-setup    # may install/start Docker and change system setup
+```
+
+On Windows use `zarzysseus.ps1 chromadb-start` / `docker-setup` instead. Docker Desktop may need **WSL 2, hardware virtualization, administrator consent, and a reboot** before ChromaDB can start. A Docker install alone does not prove the ChromaDB service is healthy. [Detailed Docker instructions](#docker-and-chromadb-setup-linux-and-windows).
+
+### Follow-ups lose their context
+
+Confirm you're continuing the **same chat**, in **Agent** mode, with the relevant model/tools enabled. If messages in that chat still lose context, the installer offers a guarded continuity repair (and may restart its managed service):
+
+```bash
+./zarzysseus.sh chat-continuity-fix status  # inspect
+./zarzysseus.sh chat-continuity-fix         # apply guarded fix if needed
+```
+
+For Windows use the equivalent `zarzysseus.ps1 chat-continuity-fix` command. This targets a known source-layout/session issue; it **does not guarantee** that every model can continue a multi-step Agent workflow or remember a separate chat. [Continuity limitations](#same-chat-continuity-and-cookbook-reliability).
+
+### Windows-specific setup hurdles
+
+Run the installer in **Windows PowerShell 5.1+**, not by double-clicking the `.ps1`. Use the [download-to-file installation commands](#windows-installation) so the menu keeps terminal input. If WinGet or Git/Python/Ollama is missing, let the **confirmed install** preflight set up supported prerequisites; restart PowerShell afterward if the PATH changes. Docker Desktop may require WSL 2/virtualization and a reboot. The included `-ExecutionPolicy Bypass` applies **only to that invocation**, not system-wide. Windows does not support the full Linux GPU/backend or skills.sh marketplace feature set yet. [Windows feature matrix](#windows-support).
+
+> **Before sharing diagnostics:** remove tokens, private URLs, filenames containing personal data, and contents of browser pages. Read-only commands above are intended to inspect state; setup, repair, download, start and restart commands can modify services, dependencies or Odysseus's guarded source files. Never bypass an Agent tool-approval dialog merely to make a screenshot test pass.
 
 ## Agent reliability repair and diagnostics (Linux and Windows)
 
@@ -135,7 +275,7 @@ Look for `[zarzysseus-agent-v6] queued explicitly requested screenshot via upstr
 
 ### Testing evidence and patch history
 
-On the reported CachyOS host, `qwen3-vl:8b` returned real structured calls through Ollama's native and OpenAI-compatible APIs, including streaming; a short isolated call through Odysseus's installed adapter also passed. Yet the full Agent request initially produced **reasoning only / zero tool calls**. V2 narrowed the browser tools to four; V3 retried without recovering; V4 introduced the compact fallback and the first live navigation executed successfully; the approved continuation lost browser schemas. V5 guards that continuation. A later live test confirmed V5 offered the screenshot tool, but the model and V4 compact fallback produced no valid screenshot proposal. V6 adds a tightly scoped explicit screenshot continuation. V7 then fixes a separate upstream regression that misclassifies URLs as workspace paths. **Successful live browser screenshot generation and inline display remain unverified.**
+On the reported CachyOS host, `qwen3-vl:8b` returned real structured calls through Ollama's native and OpenAI-compatible APIs, including streaming; a short isolated call through Odysseus's installed adapter also passed. Yet the full Agent request initially produced **reasoning only / zero tool calls**. V2 narrowed the browser tools to four; V3 retried without recovering; V4 introduced the compact fallback and the first live navigation executed successfully; the approved continuation lost browser schemas. V5 guards that continuation. A later live test confirmed V5 offered the screenshot tool, but the model and V4 compact fallback produced no valid screenshot proposal. V6 adds a tightly scoped explicit screenshot continuation. V7 then fixes a separate upstream regression that misclassifies URLs as workspace paths. **A live V8 test verified browser navigation, screenshot execution (`exit_code=0`), and image display in the screenshot tool's process panel.** Display as a standalone assistant image and cross-model reliability are not yet verified.
 
 The guarded repairs make changes to `src/agent_loop.py` in the detected Odysseus checkout. `agent-rollback` restores V7, V6, V5, V4, V3, V2, and earlier agent repair layers in reverse order, provided their backups and digests match. After rollback, automatic reapplication remains disabled until an explicit repair.
 
