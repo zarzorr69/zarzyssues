@@ -1,5 +1,19 @@
 # Zarzysseus
 
+An interactive AI installation and service-management toolkit for **Odysseus native Linux and Windows installs**, with my own custom favorite models and skills available for install under `Fave` selections.
+
+Zarzysseus is a separate installer and management TUI for the upstream [Odysseus project](https://github.com/odysseus-dev/odysseus). It helps discover an existing checkout, install the native application, browse models, install skills, and repair supported dependencies. **The Linux and Windows editions do not yet have identical feature coverage**; see [Windows support](#windows-support) below.
+
+## Quick links
+
+**Get started:** [Agent reliability & diagnostics](#agent-reliability-repair-and-diagnostics-linux-and-windows) · [Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows) · [Linux installation](#linux-installation) · [Windows installation](#windows-installation)
+
+**Configure:** [Network access & security](#network-discoverability-and-security-linux-and-windows) · [Docker & ChromaDB](#docker-and-chromadb-setup-linux-and-windows) · [Linux OS-update toggle](#linux-full-os-update-toggle) · [Same-chat continuity & Cookbook](#same-chat-continuity-and-cookbook-reliability) · [MCP & FreeMCP](#mcp-runtime-built-ins-and-freemcp) · [Skill-declared MCP auto-setup](#skill-declared-mcp-servers) · [Tool-call JSON recovery](#local-model-json-tool-call-recovery) · [Executable skills](#executable-skills-and-native-tool-routing) · [Linux distribution support](#linux-distribution-support) · [Windows support](#windows-support) · [Ollama vs Hugging Face model IDs](#ollama-vs-hugging-face-model-ids)
+
+**Troubleshoot:** [Odysseus fixes & diagnostics](#odysseus-integration-fixes-and-diagnostics) · [Linux repair commands](#linux-repair-and-verify) · [Windows repair commands](#windows-repair-and-verify) · [Verify tool execution](#confirm-a-tool-was-actually-executed) · [Requirements](#requirements)
+
+## Agent reliability repair and diagnostics (Linux and Windows)
+
 ## Agent Runtime Recovery V3 (2026-10-11)
 
 **Diagnosis of the reproduced failure:** Qwen3-VL 8B emitted reasoning-only streaming
@@ -36,19 +50,6 @@ source. Avoid manual upstream edits after repair until rolling back or reconcili
 does not yet implement full desktop control or guarantee screenshot image rendering.
 
 
-An interactive AI installation and service-management toolkit for **Odysseus native Linux and Windows installs**, with my own custom favorite models and skills available for install under `Fave` selections.
-
-Zarzysseus is a separate installer and management TUI for the upstream [Odysseus project](https://github.com/odysseus-dev/odysseus). It helps discover an existing checkout, install the native application, browse models, install skills, and repair supported dependencies. **The Linux and Windows editions do not yet have identical feature coverage**; see [Windows support](#windows-support) below.
-
-## Quick links
-
-**Get started:** [Agent reliability & diagnostics](#agent-reliability-repair-and-diagnostics-linux-and-windows) · [Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows) · [Linux installation](#linux-installation) · [Windows installation](#windows-installation)
-
-**Configure:** [Network access & security](#network-discoverability-and-security-linux-and-windows) · [Docker & ChromaDB](#docker-and-chromadb-setup-linux-and-windows) · [Linux OS-update toggle](#linux-full-os-update-toggle) · [Same-chat continuity & Cookbook](#same-chat-continuity-and-cookbook-reliability) · [MCP & FreeMCP](#mcp-runtime-built-ins-and-freemcp) · [Skill-declared MCP auto-setup](#skill-declared-mcp-servers) · [Tool-call JSON recovery](#local-model-json-tool-call-recovery) · [Executable skills](#executable-skills-and-native-tool-routing) · [Linux distribution support](#linux-distribution-support) · [Windows support](#windows-support) · [Ollama vs Hugging Face model IDs](#ollama-vs-hugging-face-model-ids)
-
-**Troubleshoot:** [Odysseus fixes & diagnostics](#odysseus-integration-fixes-and-diagnostics) · [Linux repair commands](#linux-repair-and-verify) · [Windows repair commands](#windows-repair-and-verify) · [Verify tool execution](#confirm-a-tool-was-actually-executed) · [Requirements](#requirements)
-
-## Agent reliability repair and diagnostics (Linux and Windows)
 
 **New: Agent Doctor / Repair / Smoke Test / Rollback.** The failure `bash: browser-use: command not found` means a model tried an imaginary **shell executable** rather than an Odysseus web/browser tool. Odysseus already runs permitted tool calls automatically in Agent mode; this repair improves the model's available-tool selection and instructions. It does not install a `browser-use` binary, auto-click UI buttons, execute arbitrary generated shell commands, or bypass Odysseus security approvals.
 
