@@ -4,15 +4,53 @@ An interactive AI installation and service-management toolkit for **Odysseus nat
 
 Zarzysseus is a separate installer and management TUI for the upstream [Odysseus project](https://github.com/odysseus-dev/odysseus). It helps discover an existing checkout, install the native application, browse models, install skills, and repair supported dependencies. **The Linux and Windows editions do not yet have identical feature coverage**; see [Windows support](#windows-support) below.
 
-## Quick links
+## 🧭 Quick links
 
-**Installation & first run:** [Linux installation](#linux-installation) · [Windows installation](#windows-installation) · [First-run checklist](#first-run-checklist) · [Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows)
+**New here?** Start with the [first-run checklist](#first-run-checklist). **Something broken?** Jump straight to the [troubleshooting guide](#quick-start-and-troubleshooting).
 
-**Something missing or not working?** [Start troubleshooting here](#quick-start-and-troubleshooting) · [App/UI won't start](#app-or-web-ui-wont-open) · [Ollama/model missing](#ollama-or-a-model-is-missing) · [Browser/screenshot failure](#browser-tools-or-screenshots-arent-working) · [Skills or MCP missing](#skills-or-mcp-tools-arent-available) · [Docker/ChromaDB missing](#docker-or-chromadb-isnt-ready) · [Chat loses context](#follow-ups-lose-their-context) · [Windows setup problems](#windows-specific-setup-hurdles)
+### 🚀 Install & get running
 
-**Configure:** [Network access & security](#network-discoverability-and-security-linux-and-windows) · [Docker & ChromaDB](#docker-and-chromadb-setup-linux-and-windows) · [Linux OS-update toggle](#linux-full-os-update-toggle) · [Same-chat continuity & Cookbook](#same-chat-continuity-and-cookbook-reliability) · [MCP & FreeMCP](#mcp-runtime-built-ins-and-freemcp) · [V9 skill & MCP manager](#v9-unified-skill-installation-mcp-consent-and-tool-health) · [V10 skill-aware model advisor](#v10-skill-aware-model-advisor-and-hardware-auto-fit) · [Skill-declared MCP auto-setup](#skill-declared-mcp-servers) · [Tool-call JSON recovery](#local-model-json-tool-call-recovery) · [Executable skills](#executable-skills-and-native-tool-routing) · [Linux distribution support](#linux-distribution-support) · [Windows support](#windows-support) · [Ollama vs Hugging Face model IDs](#ollama-vs-hugging-face-model-ids)
+| Installation | First-time setup |
+| :--- | :--- |
+| 🐧 **[Linux installation](#linux-installation)** | ✅ **[First-run checklist](#first-run-checklist)** |
+| 🪟 **[Windows installation](#windows-installation)** | 🤗 **[Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows)** |
 
-**Advanced diagnostics:** [Agent reliability & browser repairs](#agent-reliability-repair-and-diagnostics-linux-and-windows) · [Odysseus fixes & diagnostics](#odysseus-integration-fixes-and-diagnostics) · [Linux repair commands](#linux-repair-and-verify) · [Windows repair commands](#windows-repair-and-verify) · [Verify tool execution](#confirm-a-tool-was-actually-executed) · [Requirements](#requirements)
+### 🛠️ Find a fix fast
+
+| Application & models | Agents & integrations |
+| :--- | :--- |
+| 🚫 [App or web UI won't open](#app-or-web-ui-wont-open) | 🌐 [Browser or screenshots aren't working](#browser-tools-or-screenshots-arent-working) |
+| 🦙 [Ollama or models missing](#ollama-or-a-model-is-missing) | 🧩 [Skills or MCP tools missing](#skills-or-mcp-tools-arent-available) |
+| 🐳 [Docker / ChromaDB problems](#docker-or-chromadb-isnt-ready) | 💬 [Agent follow-ups lose context](#follow-ups-lose-their-context) |
+| 🪟 [Windows setup hurdles](#windows-specific-setup-hurdles) | 🔑 [Hugging Face model / access problems](#recommended-first-time-setup-hugging-face-linux-and-windows) |
+
+**🩺 [Full troubleshooting guide →](#quick-start-and-troubleshooting)** — diagnostics first, repairs only when needed.
+
+<details>
+<summary><strong>⚙️ Configuration & integrations</strong> — networking, Docker, skills, MCP, models and more</summary>
+
+| System & environment | Agent & skills |
+| :--- | :--- |
+| [Network access & security](#network-discoverability-and-security-linux-and-windows) | [MCP & FreeMCP](#mcp-runtime-built-ins-and-freemcp) |
+| [Docker & ChromaDB](#docker-and-chromadb-setup-linux-and-windows) | [V9 Skills & MCP Manager](#v9-unified-skill-installation-mcp-consent-and-tool-health) |
+| [Linux OS-update toggle](#linux-full-os-update-toggle) | [V10 Skill-Aware Model Advisor](#v10-skill-aware-model-advisor-and-hardware-auto-fit) |
+| [Linux distribution support](#linux-distribution-support) | [Skill-declared MCP setup](#skill-declared-mcp-servers) |
+| [Windows support](#windows-support) | [Executable skills & tool routing](#executable-skills-and-native-tool-routing) |
+| [Ollama vs Hugging Face IDs](#ollama-vs-hugging-face-model-ids) | [Tool-call JSON recovery](#local-model-json-tool-call-recovery) |
+| | [Same-chat continuity & Cookbook](#same-chat-continuity-and-cookbook-reliability) |
+
+</details>
+
+<details>
+<summary><strong>🔬 Advanced diagnostics</strong> — repair commands, tool execution and requirements</summary>
+
+| Diagnose & repair | Validate |
+| :--- | :--- |
+| [Agent reliability & browser repairs](#agent-reliability-repair-and-diagnostics-linux-and-windows) | [Verify tool execution](#confirm-a-tool-was-actually-executed) |
+| [Odysseus integration diagnostics](#odysseus-integration-fixes-and-diagnostics) | [System requirements](#requirements) |
+| [Linux repair commands](#linux-repair-and-verify) | [Windows repair commands](#windows-repair-and-verify) |
+
+</details>
 
 ## Quick start and troubleshooting
 
