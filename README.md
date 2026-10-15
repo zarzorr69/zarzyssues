@@ -1,12 +1,36 @@
 # Zarzysseus
 
-An interactive AI installation and service-management toolkit for **Odysseus native Linux and Windows installs**, with my own custom favorite models and skills available for install under `Fave` selections.
+**Install, run, and manage [Odysseus](https://github.com/odysseus-dev/odysseus) through an interactive menu.** Zarzysseus helps you choose models that fit your computer, connect skills and MCP tools, manage services, and troubleshoot problems without memorizing dozens of commands.
 
-Zarzysseus is a separate installer and management TUI for the upstream [Odysseus project](https://github.com/odysseus-dev/odysseus). It helps discover an existing checkout, install the native application, browse models, install skills, and repair supported dependencies. **Linux now offers Native and Docker management modes; Windows retains its native TUI. Feature parity is scoped and tested individually**; see [Windows support](#windows-support) below.
+- **On Linux:** choose **Native** (runs on your computer) or **Docker** (runs in containers), then choose **CPU-only** or **Full** hardware support. You can switch modes later.
+- **On Windows:** use the native PowerShell installer and its numbered menus. Docker and hardware-profile menu parity are not yet available there.
+- **If you're new:** start with the quick command below, then follow the [guided walkthroughs](#guided-walkthroughs-use-the-tui-first). Advanced commands and technical explanations are further down.
+
+Zarzysseus is a companion tool, **not** an alternative copy of Odysseus. You choose when to install services, download models, or approve third-party tools.
 
 ## 🧭 Quick links
 
-**New here?** Follow the **[guided TUI walkthroughs](#guided-walkthroughs-use-the-tui-first)** first — menu paths, what to select, what happens next, and how to verify success. Prefer the interactive menus; shell commands later in this README are optional diagnostics and advanced shortcuts. **Something broken?** Jump to the [troubleshooting guide](#quick-start-and-troubleshooting).
+### Start on Linux with curl (one line)
+
+Copy this **one line** into a Linux terminal (Bash, Fish, or Zsh). It downloads the **complete Zarzysseus project**, including the Docker files, into a folder that stays on your computer. Then it opens the interactive menu.
+
+```bash
+mkdir -p "$HOME/.local/share/zarzysseus" && curl -fL --retry 3 https://github.com/zarzorr69/zarzyssues/archive/refs/heads/main.tar.gz -o "$HOME/.local/share/zarzysseus-source.tar.gz" && tar -xzf "$HOME/.local/share/zarzysseus-source.tar.gz" -C "$HOME/.local/share/zarzysseus" --strip-components=1 && bash "$HOME/.local/share/zarzysseus/zarzysseus.sh"
+```
+
+**What happens next?** Choose **Native** or **Docker**, then **CPU-only** or **Full**. Nothing is installed merely by opening the menu: follow **Install / Update** and approve the components you want. Docker mode requires Docker Engine and Compose; Native mode installs and manages services on the host.
+
+To **open the TUI again later**, run:
+
+```bash
+bash "$HOME/.local/share/zarzysseus/zarzysseus.sh"
+```
+
+This uses the repository's current `main` branch. Read the [installation and safety notes](#linux-installation) if you prefer to inspect the files first or already have a customized copy. **Termux itself is not a supported Linux installation target**; run Zarzysseus on an actual Linux machine or server.
+
+### 🗺️ Jump to a guide
+
+Want the menus rather than commands? Start with the **[step-by-step TUI walkthroughs](#guided-walkthroughs-use-the-tui-first)**. If something fails, go straight to the **[troubleshooting guide](#quick-start-and-troubleshooting)**.
 
 ### 🚀 Install & get running
 
@@ -15,7 +39,7 @@ Zarzysseus is a separate installer and management TUI for the upstream [Odysseus
 
 | Installation | First-time setup |
 | :--- | :--- |
-| 🐧 **[Linux: Native or Docker mode](#v11-one-launcher-native-and-docker-modes)** | ✅ **[First-run checklist](#first-run-checklist)** |
+| 🐧 **[Linux: install and open the TUI](#linux-installation)** | ✅ **[First-run checklist](#first-run-checklist)** |
 | 🪟 **[Windows installation](#windows-installation)** | 🤗 **[Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows)** |
 
 ### 🛠️ Find a fix fast
@@ -67,192 +91,39 @@ Zarzysseus is a separate installer and management TUI for the upstream [Odysseus
 | 📖 **[Read the complete changelog →](#changelog)** | 🛠️ [Cookbook V10.2.1 progress hotfix](#v1021--cookbook-progress-compatibility-hotfix) |
 
 
-## V11.1 — Two independent switches: deployment + hardware
+## Getting started in three steps
 
-Zarzysseus now has **two independent persisted settings on Linux**:
+1. **Open the menu.** Use the [Linux curl one-liner](#start-on-linux-with-curl-one-line) above, or follow [Windows installation](#windows-installation).
+2. **Choose where Odysseus will run.** On Linux, select **Native** for a regular desktop install or **Docker** for a containerized server. Next, choose **CPU-only** for systems without a supported GPU or **Full** if you want the available GPU/runtime options. This is a preference, not an immediate install.
+3. **Install, start, and open Odysseus.** Follow **Install / Update**, then **Service Management → Start/Status**. Open the address shown by your installation. A native default is `http://127.0.0.1:7000`; Docker addresses/ports come from the Compose configuration.
 
-| Deployment | Hardware profile | What it manages |
-|---|---|---|
-| Native | CPU-only | Host Odysseus, Ollama, small/low-power model choices, skills, MCP and diagnostics. Disables automatic GPU/runtime installation. |
-| Native | Full | The existing full native TUI, GPU/ROCm/CUDA actions, models, Cookbook, and all earlier repairs. |
-| Docker | CPU-only | The existing ZimaOS-oriented Compose stack: Ollama, Odysseus, ChromaDB, SearXNG, skill/MCP bridge. No GPU service. |
-| Docker | Full | The same Compose stack and container tool categories **plus optional, separate AMD RDNA3 inference management** and real DNS/readiness/generation tests. |
+**Which mode should I choose?**
 
-This is a **hardware policy**, not a data migration: switching either setting does not delete services, installed models, persistent Docker volumes, `.env`, or credentials. Existing installations default to Native=Full, Docker=CPU-only unless you choose otherwise. On first interactive launch, choose Native/Docker, then CPU-only/Full. In either main menu, select **HARDWARE PROFILE: CPU-ONLY / FULL** (Native) or **SWITCH CPU-ONLY / FULL PROFILE** (Docker) to change the hardware profile later.
-
-```text
-                         ZARZYSSEUS
-                              │
-             1. DEPLOYMENT MODE (persistent)
-                     ┌────────┴─────────┐
-                NATIVE               DOCKER
-                     │                   │
-             2. HARDWARE PROFILE (separate per deployment)
-               CPU / FULL            CPU / FULL
-                     │                   │
-              Host services        Compose services
-```
-
-For scripting or recovering a menu selection:
-
-```bash
-bash ./zarzysseus.sh mode status         # Shows both saved profiles
-bash ./zarzysseus.sh profile status      # Read-only profile summary
-bash ./zarzysseus.sh profile native cpu  # Native CPU-only
-bash ./zarzysseus.sh profile native full # Restore native full feature set
-bash ./zarzysseus.sh profile docker cpu  # ZimaOS / no GPU
-bash ./zarzysseus.sh profile docker full # GPU-capable hosts (optional)
-bash ./zarzysseus.sh mode docker         # Enter Docker mode
-bash ./zarzysseus.sh                     # Open selected mode's menu
-```
-
-**The same feature category does not imply identical host capabilities.** Docker cannot safely replace host-driver installation, systemd management, Windows/macOS features, or access arbitrary host applications. Those remain native/host-only, and Docker offers container-scoped equivalents where supported. The Windows PowerShell script remains in Native mode; this V11.1 hardware selector is Linux-only. CPU-only constrains automatic runtime installs but does not block using existing GPU-backed services outside Zarzysseus.
-
-### Docker Full: RDNA3 workflow and DNS troubleshooting
-
-The **Full** Docker menu now exposes:
-
-```text
-MODEL RUNTIMES — FULL
-  CPU Ollama readiness
-  AMD RDNA3 doctor (cached/pinned image, no model load)
-  Test Docker DNS / Hugging Face HTTPS
-  Start RDNA3 SGLang (explicit approval)
-  GPU health status
-  GPU logs
-  Real text-generation test
-  Stop GPU model server
-```
-
-For the RX 7900 XT, the pinned **AMD-AIM/sglang-radeon** image passed the `sglang-rdna3 doctor` import/kernel tests, but real inference is *not* yet confirmed. The prior `Qwen/Qwen2.5-0.5B-Instruct` launch failed with `Temporary failure in name resolution` for `huggingface.co`, so **do not assume the model started**. The new DNS preflight checks the container's resolution and HTTPS handshake **before** starting a GPU model server. It never silently changes Docker daemon DNS or bypasses Pi-hole. If it fails, compare the host's `getent hosts huggingface.co` with Docker resolver settings (`docker info`, `/etc/resolv.conf`, and `docker network inspect bridge`) and investigate your local DNS forwarder. A one-time diagnostic override is available with `gpu-dns-check DNS_IP`; it is a test, not a persistent DNS change.
-
-The GPU server uses the optional `compose.gpu.yaml` overlay under **the same Compose project**. It binds **127.0.0.1:30000** by default, keeps weights in a named `rdna3-model-cache` volume, and never starts just by switching profiles. The GPU image pull and model download are user-initiated. Be aware that a previous manually started container named `zarzysseus-sglang-test` may occupy port 30000: inspect `docker ps -a --filter name=zarzysseus-sglang-test` before starting the managed service.
-
-If you already have the kit deployed on ZimaOS, point V11.1 to the *existing* directory and run `docker-kit-sync` **preview**, followed by `docker-kit-sync apply` when satisfied. The upgrade includes the new optional overlay but preserves `.env`, workspace, and persistent model volumes. Review your current Compose edits in the generated backups before starting the updated stack.
-
-Use the read-only CLI checks after switching to Docker Full:
-
-```bash
-bash ./zarzysseus.sh docker gpu-doctor      # May request permission to pull image
-bash ./zarzysseus.sh docker gpu-dns-check   # No model download
-bash ./zarzysseus.sh docker gpu-start       # Explicit GPU + image approval; may download model
-bash ./zarzysseus.sh docker gpu-status      # Only READY when /health responds
-bash ./zarzysseus.sh docker gpu-logs        # Logs are diagnostic; model may still be starting
-bash ./zarzysseus.sh docker gpu-test        # Only PASS on real generated assistant text
-bash ./zarzysseus.sh docker gpu-stop        # Preserves downloaded weights
-```
-
-**CPU-only ZimaOS does not need these GPU commands.** Leave Docker=CPU and use your installed `qwen3.5-zarzysseus-cpu:4b` or the lighter agent profile. For a model like `google/tipsv2-g14`, download success never implies chat compatibility: it is a non-generative image/text encoder and needs a task-specific interface.
-
----
-
-## V11: One launcher, Native and Docker modes
-
-**The Linux edition now asks you to pick a management mode on its first interactive run.** The setting is saved at `~/.config/zarzysseus/runtime-mode`; you can change it later from the main menu or the `mode` command. It does **not** convert a native install into a container, migrate data, or delete either stack. Windows currently keeps its existing native PowerShell TUI; the V11 Docker selector is Linux-only.
-
-### Quick start: choose your mode in the TUI
-
-Unzip the **complete V11 release folder** in a persistent location. Do not copy only the root `.sh` if you want Docker features: the `docker/` folder contains the Compose stack, model profiles, and verified container bridge.
-
-```text
-$ bash ./zarzysseus.sh
-
-=== ZARZYSSEUS FIRST START ===
-  1) Native Linux — host Python, services, GPU runtimes
-  2) Docker — isolated Odysseus + CPU Ollama (good for ZimaOS)
-  0) Exit
-```
-
-The modes have **matching top-level categories**, so installation, model management, skills, MCP, diagnostics, and networking appear in familiar places. Individual choices use each mode's real implementation. Docker does not change host GPU drivers, install system packages, run the native systemd stack, or expose host directories without explicit mounts. Such entries explain the limitation instead of pretending to work.
-
-```text
-              ZARZYSSEUS
-             /           \
-     Native Linux        Docker / ZimaOS
-   ┌────────────────┐  ┌───────────────────────┐
-   │ Install/update │  │ CPU Docker install    │
-   │ systemd + venv │  │ Compose + CPU Ollama  │
-   │ Model backends │  │ Ollama + AMD doctor*  │
-   │ Skills/MCP     │  │ Container Skills/MCP  │
-   │ Browser Agent  │  │ Container Agent tools │
-   └────────────────┘  └───────────────────────┘
-
-  * AMD RDNA3 doctor is an optional test, not a model server.
-```
-
-From **Native main menu → SWITCH TO DOCKER MODE** or **Docker main menu → SWITCH TO NATIVE MODE**, switch immediately to the corresponding menu. You can also use:
-
-```bash
-bash ./zarzysseus.sh mode status
-bash ./zarzysseus.sh mode docker
-bash ./zarzysseus.sh mode native
-bash ./zarzysseus.sh docker status         # One-off Docker command
-bash ./zarzysseus.sh native status         # One-off native command
-```
-
-### Existing ZimaOS CPU kit: preserve your installation
-
-If you already ran the separate `zarzysseus-cpu-kit` on your fourth-generation i7, **do not launch the new bundled Compose stack on top of it**. Point V11 at the *existing* folder and preview the upgrade. Use the actual path on your server:
-
-```bash
-bash ./zarzysseus.sh docker-path "$HOME/zarzysseus-cpu-starter-kit/zarzysseus-cpu-kit"
-bash ./zarzysseus.sh docker-kit-sync          # READ-ONLY preview
-bash ./zarzysseus.sh docker-kit-sync apply    # Type SYNC to approve
-bash ./zarzysseus.sh mode docker
-bash ./zarzysseus.sh                           # Open the Docker TUI
-```
-
-`docker-kit-sync apply` saves modified kit source into `.zarzysseus-kit-backups/<timestamp>/` first. It **never copies or removes** `.env`, `workspace/`, `config/searxng/`, or Docker named volumes, so your manually configured port `7012`, bind address, app data, Ollama models, and credentials stay in place. Review custom Compose changes in the preview/backups before accepting: the Compose file itself *is* replaced. This is a kit-file upgrade, not a container recreation. When convenient, choose **Service Management → Start Odysseus** to recreate with the new toolkit bind mount, and **Install / Update → Install/refresh toolkit helper** to prepare the matching checksum-verified repair helpers.
-
-If you do not have an existing kit, leave `docker-path` unset. The unified launcher uses the bundled `docker/` stack. Enter **Docker → Install / Update → Install complete CPU stack**, review its download notice, and type `INSTALL` to provision the quality model, Docker services, and toolkit. Image and model downloads are never performed merely by opening the TUI. On ZimaOS, Docker access may request your sudo password if your account cannot access the daemon directly. **Do not run the native Zarzysseus installer as root.**
-
-### Docker menu walkthroughs
-
-| Feature | Docker TUI path | Result / limits |
+| Your computer | Good starting choice | Why |
 | :--- | :--- | :--- |
-| Install Odysseus | **Install / Update → Install complete CPU stack** | Consent-based Compose stack and Qwen3.5 4B CPU profile |
-| Start/restart/stop | **Service Management** | Controls the existing Odysseus container, not the host's systemd service |
-| Download a CPU model | **Ollama Management → Install Qwen3.5 CPU quality profile**, or **Pull a named model** | Explicit downloads to the persistent Ollama named volume |
-| Compare models | **Model Manager / Hardware Fit → Skill-aware model advisor** | Model advice and existing inventory; test quality on your i7 |
-| Use the original CPU benchmarks | **Model Manager / Hardware Fit → Benchmark quality model** | Measures local latency and tool-format proposals; does not execute tools |
-| Install skills | **Skills.sh / Agent Skills → Search / Install selected skill** | Runs only supported toolkit helpers inside the app container |
-| Provision MCP | **Skills.sh / Agent Skills → Approve/setup dependencies**, or **MCP / FreeMCP → MCP setup** | Consent and declaration checks remain mandatory |
-| Cookbook | **Diagnostics → Cookbook status / progress repair** | Version-sensitive source checks; unsupported patches fail closed |
-| Agent issues | **Diagnostics → Docker + Agent + skills doctor** | Reports repair/tool readiness; live browser/screenshot runs still require manual verification |
-| LAN/Tailscale access | **Network Discoverability** | Edit your existing `.env` `APP_BIND` and `APP_ORIGIN`; enable authentication and restrict access |
-| Radeon RDNA3 | **Model Runtimes → AMD RDNA3 Docker diagnostics** | Only for an AMD host with `/dev/kfd`; asks before pulling pinned image; no model served |
-| Hugging Face files | **Hugging Face / Model Files → Model advisor** | No unsupported HF encoder advertised as an ordinary chat server |
-| Native-only features | **MLX-LM / driver or OS package operations** | Explains limitation and directs you to native mode |
+| Linux desktop, local services | **Native + Full** | Access to native models, tools, and optional GPU setup |
+| Older Linux PC or ZimaOS server | **Docker + CPU-only** | Separate containers, smaller CPU model profiles, easier service management |
+| Linux desktop testing container inference | **Docker + Full** | CPU stack plus opt-in compatible GPU containers (not full host-driver control) |
+| Windows 10/11 | **Windows native TUI** | Numbered PowerShell menu; Linux mode selector does not apply |
 
-**CPU profile defaults** from the attached kit: `qwen3.5-zarzysseus-cpu:4b`, Ollama CPU only, context 4096, two threads, and Thinking off for that exact profile. Your fourth-generation i7 with 16 GB DDR3 can run the model, but tool calls and longer prompts may be slow. Keep the existing `.env` resource limits unless benchmarking justifies a change. Other CPU profiles (`agent`, `moe`) are optional downloads.
-
-### Host/runtime readiness and the Radeon findings
-
-The optional Docker **`gpu-doctor`** tests the RDNA3-compatible SGLang image by immutable SHA-256 image digest with `/dev/kfd` and `/dev/dri`. The successful RX 7900 XT doctor output established kernel/import compatibility—not server readiness or text generation. Docker mode does not install GPU kernels into the ZimaOS host, and on a CPU-only host it explicitly says to use Ollama instead. For an already running *local* test inference server, **`gpu-readiness`** checks `/health` and `/v1/models`; a genuine generation request is still needed to establish inference success.
-
-The earlier native SGLang environment contained a mismatched CUDA `sgl_kernel` wheel and missing AITER, and is intentionally **not repaired automatically**. Non-generative models such as `google/tipsv2-g14` need task-specific interfaces; neither the Docker menu nor GPU doctor pretends they can be launched as chat models. Do not overwrite your working Odysseus Python environment to solve a container problem.
-
-### What was tested—and what wasn't
-
-V11 has offline tests for the mode selector, persisted mode changes, CLI routing, menu category parity, dry-run/approved Docker kit sync, byte-preserved `.env`, checksum-verified bundled bridge, CPU model payload adapter, container source-guarded replay, and CLI argument handling. **Docker could not be launched in the build environment**, so installing and serving a real model on your ZimaOS server must still be verified. The CPU kit's *newer* Odysseus dispatch rejected portions of the legacy V3–V8 browser recovery chain; the bridge keeps those repairs optional and does not claim identical screenshot behavior until live tests pass.
-
+If you have an existing ZimaOS CPU kit, **reuse it** rather than starting a second stack. See [upgrading an existing Docker kit](#v11-one-launcher-native-and-docker-modes) before installing. The four Linux combinations offer matching categories, but not every native host function exists inside a container.
 
 ## Guided walkthroughs: use the TUI first
 
-**You do not need to memorize terminal commands.** Zarzysseus is designed to be navigated interactively. The diagrams below represent **real menu labels in the V10.2 Linux and Windows scripts**; they are text guides, not screenshots. Menu wording may shorten on a narrow Linux terminal. Commands in later reference sections are for people who want automation or need deeper debugging.
+**Prefer clicking through a menu? That's the main way to use Zarzysseus.** These text diagrams show where to go and what to check afterward. Linux has separate Native and Docker menus; Windows uses a numbered menu. Some labels may be shortened on smaller terminals. Use the commands later in this document only when you want automation or need to investigate a problem.
 
 ### Start the interactive menus
 
 | Linux (including Arch/CachyOS, Ubuntu and other supported distributions) | Windows PowerShell |
 | --- | --- |
-| Download `zarzysseus.sh`, open a terminal in its directory, and run `chmod +x ./zarzysseus.sh` once, then `./zarzysseus.sh`. | Download `zarzysseus.ps1`, open PowerShell in its directory, and run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1`. |
+| Run the [full-project curl one-liner](#start-on-linux-with-curl-one-line). Later use `bash "$HOME/.local/share/zarzysseus/zarzysseus.sh"` to reopen the menu. | [Download `zarzysseus.ps1`](#windows-installation), then open PowerShell in its folder and run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1`. |
 | Use **↑ / ↓** or **j / k**, **Enter** to select, and **q / Esc** to go back. | Menus are numbered: enter the **number** at `Choose` and press **Enter**. The model picker has its own keyboard controls. |
 | On short terminals, menus scroll. Enlarging the terminal makes names easier to read. | Keep PowerShell open while a setup action is running; approve Windows/WinGet prompts when you intentionally requested them. |
 
 **How to read a path:** `MAIN MENU → SERVICE MANAGEMENT → SHOW STATUS` means enter the first menu, choose that item, then choose the next. The script can return from its full-screen menu to show installer output; wait for the result and the prompt to continue. **Inspect/status** actions are usually read-only; **Install/Start/Repair/Download/Enable/Remove** can change files, services, software or network exposure.
 
 <details open>
-<summary><strong>🗺️ Linux main-menu map (open this first)</strong></summary>
+<summary><strong>🗺️ Linux menu map — Native mode</strong></summary>
 
 ```text
 ZARZYSSEUS MAIN MENU
@@ -271,11 +142,11 @@ ZARZYSSEUS MAIN MENU
 └── EXIT
 ```
 
-**Windows uses a different numbered main menu**; see the [Windows navigation map](#windows-guided-menu-map-and-feature-paths) below instead of trying to follow Linux-only nested paths.
+**Using Docker mode?** Its main menu has numbered categories including **1 Install / Update**, **2 Service Management**, **3 Model Runtimes**, **8 Skills**, and **13 Switch CPU-only / Full profile**. See the Docker walkthrough below. **Using Windows?** Follow the [Windows numbered menu map](#windows-guided-menu-map-and-feature-paths).
 
 </details>
 
-### First run: from download to a working chat (Linux)
+### First run: Native Linux — from setup to your first chat
 
 ```text
 MAIN MENU
@@ -290,12 +161,37 @@ MAIN MENU
             └── MANUAL MODEL SELECTION
 ```
 
-1. Launch `./zarzysseus.sh` and select **INSTALL / UPDATE**. Check **AUTO FULL OS UPDATE**: toggle it **OFF** if you do not want the optional full operating-system update. This choice is persistent; it is different from installing just the application dependencies.
+1. Open the launcher and select **Native**, then your hardware profile. In the Native TUI, choose **INSTALL / UPDATE**. Check **AUTO FULL OS UPDATE**: toggle it **OFF** if you do not want the optional full operating-system update. This choice is persistent; it is different from installing just the application dependencies.
 2. Select **INSTALL / UPDATE ZARZYSSEUS STACK**. Choose the content profile you actually want (for a first chat, a **TEXT** auto-fit profile is sufficient); you can add other modalities later. **Attention:** the profile selector has a **30-second idle timer** that defaults to the full text/video/photo/audio profile. Make your selection rather than leaving it untouched.
 3. Review the installer output and approve only the requested dependencies you intend to use. Docker/ChromaDB, GPU backends and larger model downloads may take time. Opening the TUI itself does **not** install everything.
 4. Return to **SERVICE MANAGEMENT → SHOW STATUS**, then **START ZARZYSSEUS** if it is not running. Optionally choose **ENABLE AUTO-START**.
 5. Open `http://127.0.0.1:7000` in a browser on the host. In Odysseus, select an **installed** model from the chat model selector and send a simple question. For an action requiring tools, enable **Agent** before sending it.
 6. Need another model? Use [model browsing](#browse-install-and-select-a-model). Need a skill? Use [skill installation](#find-install-and-manage-skills). If something fails, consult the [symptom guide](#find-the-fix-for-your-symptom) instead of starting the entire installation again.
+
+### First run: Docker Linux — use the container menu
+
+```text
+ZARZYSSEUS — DOCKER MODE
+  1 INSTALL / UPDATE
+      → Install Odysseus + CPU model
+      → Install/refresh toolkit helper
+  2 SERVICE MANAGEMENT
+      → Start Odysseus / Show status / Show logs
+  5 OLLAMA MANAGEMENT
+      → Install CPU quality or agent model / List models
+  8 SKILLS.SH / AGENT SKILLS
+      → Skills + MCP health / Approve setup
+ 13 SWITCH CPU-ONLY / FULL PROFILE
+```
+
+1. At first launch choose **Docker**, then **CPU-only** for a server without a dedicated GPU. Docker Engine and Docker Compose must already be available; [Docker setup help](#docker-and-chromadb-setup-linux-and-windows) explains the prerequisites.
+2. Go to **1 Install / Update → Install Odysseus + CPU model**. Read the confirmation before pulling images or models. It can take a while on a CPU-only machine.
+3. Choose **2 Service Management → Show status**. Start Odysseus if necessary, then look at **Show logs** if a container stops.
+4. Go to **5 Ollama Management → List installed models**. If you want another CPU profile, choose the quality/agent model setup item. These downloads are optional.
+5. Open the web address configured by the Docker kit. It's not necessarily the Native mode port of 7000. Select an installed chat model and test a short message.
+6. To add skills, use **8 Skills.sh / Agent Skills**; check health first, then approve only the dependencies and MCP servers you trust. If you have an existing kit, follow the [safe sync/backup path](#v11-one-launcher-native-and-docker-modes) before creating another stack.
+
+**Docker + Full:** go to **3 Model Runtimes → Test Docker DNS / Hugging Face HTTPS** before trying the optional AMD RDNA3 server. It has separate **Start**, **GPU readiness**, **GPU logs**, and **Run real generation test** actions. A healthy import alone doesn't prove a model can answer prompts. [Full profile limitations](#v111--two-independent-switches-deployment--hardware).
 
 ### Everyday service management and network access
 
@@ -313,7 +209,7 @@ MAIN MENU → SERVICE MANAGEMENT
 
 1. Choose **SHOW STATUS** to check the installation, then **START** or **RESTART** when appropriate; **STOP** deliberately takes down the UI.
 2. For normal daily use, choose **ENABLE AUTO-START**. To stop starting Odysseus at login, choose **DISABLE AUTO-START**.
-3. For a computer-only setup, enter **NETWORK DISCOVERABILITY → LOCALHOST ONLY** and browse to `http://127.0.0.1:7000`.
+3. To use Odysseus only on this computer, enter **NETWORK DISCOVERABILITY → LOCALHOST ONLY** and browse to `http://127.0.0.1:7000`.
 4. For a *trusted* LAN, choose **LOCAL NETWORK / ALL INTERFACES**, then **SHOW CURRENT MODE AND LAN IP ADDRESSES**. From another trusted device, browse to `http://HOST_LAN_IP:7000` (substitute the actual address). `0.0.0.0` is a listener setting **not** a browser destination.
 5. LAN mode can expose Odysseus to any network that can route to the host. **Do not port-forward it to the public internet**; use localhost or a trusted private network and inspect firewall rules. [Security details](#network-discoverability-and-security-linux-and-windows).
 
@@ -430,7 +326,7 @@ MAIN MENU → SKILLS.SH / AGENT SKILLS
 2. Select **V9: SKILLS + MCP HEALTH**. Check its declared tools, missing dependencies, unregistered/disabled MCP servers and missing credentials. **This is inspection, not a live agent test.**
 3. Select **V9: APPROVE + PROVISION SKILLS / MCP**. Read the redacted installation plan. Type **YES** only if you trust the source and the requested executables/network hosts. New or changed MCP declarations require fresh approval.
 4. Run **V9: SKILLS + MCP HEALTH** again. If a server still reports unregistered, disabled, or a failed handshake, address that item before asking the model to use the skill.
-5. In Odysseus **Agent** mode, select a tool-capable model and attempt a harmless skill operation. A successful handshake alone does **not** mean the model will call the tool. [V9 readiness details](#v9-unified-skill-installation-mcp-consent-and-tool-health).
+5. In Odysseus **Agent** mode, select a tool-capable model and attempt a harmless skill operation. A connected MCP server does **not** guarantee that the model will use its tools; test a real action. [V9 readiness details](#v9-unified-skill-installation-mcp-consent-and-tool-health).
 
 ### Pick and test a model for a skill (V10)
 
@@ -612,14 +508,14 @@ SKILLS (WINDOWS)
 
 ## Quick start and troubleshooting
 
-New to Zarzysseus? Start with the [TUI walkthroughs](#guided-walkthroughs-use-the-tui-first), then use this checklist to verify results. If something fails, use the **symptom → diagnosis → fix** links below rather than reinstalling the entire stack. Run commands from the directory containing your downloaded `zarzysseus.sh` or `zarzysseus.ps1` (or use their full paths). All examples assume the standard filenames.
+New to Zarzysseus? Start with the [TUI walkthroughs](#guided-walkthroughs-use-the-tui-first), then use this checklist to verify results. If something fails, use the **symptom → diagnosis → fix** links below rather than reinstalling the entire stack. Examples below use `./zarzysseus.sh` for Linux and `zarzysseus.ps1` for Windows. If you used the recommended Linux one-liner, either run `cd "$HOME/.local/share/zarzysseus"` first or use its full path. Docker's commands and port numbers differ from Native mode.
 
 ### First-run checklist
 
-1. **Download and open the installer:** follow [Linux installation](#linux-installation) or [Windows installation](#windows-installation). Opening the TUI is not the same as installing Odysseus: choose its **Install / Update** action and confirm the components you actually want.
+1. **Open the menu:** follow [Linux installation](#linux-installation) or [Windows installation](#windows-installation). On Linux, choose **Native/Docker** and a **CPU-only/Full** profile. Opening the menu does **not** automatically install Odysseus.
 2. **Let prerequisites finish:** native Python environment, Ollama, and any chosen model downloads need time and disk space. Docker/ChromaDB setup may need additional permissions; Windows Docker Desktop may need WSL 2 setup or a reboot. [Docker details](#docker-and-chromadb-setup-linux-and-windows).
 3. **Check the running app and model backend:** on Linux run `./zarzysseus.sh status` and `./zarzysseus.sh ollama-status`; on Windows use the PowerShell examples below. If Ollama is running but no model is installed, choose one using the TUI or the [V10 Model Advisor](#v10-skill-aware-model-advisor-and-hardware-auto-fit). **The advisor recommends models; it does not install or select one automatically.**
-4. **Open Odysseus:** on the host, try `http://127.0.0.1:7000` (default port; adjust if changed). For access from another device, read [Network access & security](#network-discoverability-and-security-linux-and-windows) first. Never use `0.0.0.0` as the URL.
+4. **Open Odysseus:** for Native mode, try `http://127.0.0.1:7000` (unless you changed the port). For Docker, check its Compose port mapping and service status. For access from another device, read [Network access & security](#network-discoverability-and-security-linux-and-windows) first. Never use `0.0.0.0` as the URL.
 5. **Test Agent mode separately:** choose an installed tool-capable model, enable **Agent** mode, and request a harmless action. For browser screenshots, `qwen3-vl:8b` is a **tested** baseline; other models may vary. A tool listed in the UI is not proof that the model executed it. [Live browser test](#live-browser-test-navigation-screenshot-display).
 6. **Only when you need skills:** run `skills-doctor` to see what an imported skill needs, then `skills-setup` to **review and approve** declared dependencies/MCP servers. Never approve unknown third-party code or share secrets in logs. [V9 skill setup](#v9-unified-skill-installation-mcp-consent-and-tool-health).
 
@@ -773,6 +669,175 @@ For Windows use the equivalent `zarzysseus.ps1 chat-continuity-fix` command. Thi
 Run the installer in **Windows PowerShell 5.1+**, not by double-clicking the `.ps1`. Use the [download-to-file installation commands](#windows-installation) so the menu keeps terminal input. If WinGet or Git/Python/Ollama is missing, let the **confirmed install** preflight set up supported prerequisites; restart PowerShell afterward if the PATH changes. Docker Desktop may require WSL 2/virtualization and a reboot. The included `-ExecutionPolicy Bypass` applies **only to that invocation**, not system-wide. Windows does not support the full Linux GPU/backend or skills.sh marketplace feature set yet. [Windows feature matrix](#windows-support).
 
 > **Before sharing diagnostics:** remove tokens, private URLs, filenames containing personal data, and contents of browser pages. Read-only commands above are intended to inspect state; setup, repair, download, start and restart commands can modify services, dependencies or Odysseus's guarded source files. Never bypass an Agent tool-approval dialog merely to make a screenshot test pass.
+
+## V11.1 — Two independent switches: deployment + hardware
+
+Zarzysseus now has **two independent persisted settings on Linux**:
+
+| Deployment | Hardware profile | What it manages |
+|---|---|---|
+| Native | CPU-only | Host Odysseus, Ollama, small/low-power model choices, skills, MCP and diagnostics. Disables automatic GPU/runtime installation. |
+| Native | Full | The existing full native TUI, GPU/ROCm/CUDA actions, models, Cookbook, and all earlier repairs. |
+| Docker | CPU-only | The existing ZimaOS-oriented Compose stack: Ollama, Odysseus, ChromaDB, SearXNG, skill/MCP bridge. No GPU service. |
+| Docker | Full | The same Compose stack and container tool categories **plus optional, separate AMD RDNA3 inference management** and real DNS/readiness/generation tests. |
+
+This is a **hardware policy**, not a data migration: switching either setting does not delete services, installed models, persistent Docker volumes, `.env`, or credentials. Existing installations default to Native=Full, Docker=CPU-only unless you choose otherwise. On first interactive launch, choose Native/Docker, then CPU-only/Full. In either main menu, select **HARDWARE PROFILE: CPU-ONLY / FULL** (Native) or **SWITCH CPU-ONLY / FULL PROFILE** (Docker) to change the hardware profile later.
+
+```text
+                         ZARZYSSEUS
+                              │
+             1. DEPLOYMENT MODE (persistent)
+                     ┌────────┴─────────┐
+                NATIVE               DOCKER
+                     │                   │
+             2. HARDWARE PROFILE (separate per deployment)
+               CPU / FULL            CPU / FULL
+                     │                   │
+              Host services        Compose services
+```
+
+For scripting or recovering a menu selection:
+
+```bash
+bash ./zarzysseus.sh mode status         # Shows both saved profiles
+bash ./zarzysseus.sh profile status      # Read-only profile summary
+bash ./zarzysseus.sh profile native cpu  # Native CPU-only
+bash ./zarzysseus.sh profile native full # Restore native full feature set
+bash ./zarzysseus.sh profile docker cpu  # ZimaOS / no GPU
+bash ./zarzysseus.sh profile docker full # GPU-capable hosts (optional)
+bash ./zarzysseus.sh mode docker         # Enter Docker mode
+bash ./zarzysseus.sh                     # Open selected mode's menu
+```
+
+**The same feature category does not imply identical host capabilities.** Docker cannot safely replace host-driver installation, systemd management, Windows/macOS features, or access arbitrary host applications. Those remain native/host-only, and Docker offers container-scoped equivalents where supported. The Windows PowerShell script remains in Native mode; this V11.1 hardware selector is Linux-only. CPU-only constrains automatic runtime installs but does not block using existing GPU-backed services outside Zarzysseus.
+
+### Docker Full: RDNA3 workflow and DNS troubleshooting
+
+The **Full** Docker menu now exposes:
+
+```text
+MODEL RUNTIMES — FULL
+  CPU Ollama readiness
+  AMD RDNA3 doctor (cached/pinned image, no model load)
+  Test Docker DNS / Hugging Face HTTPS
+  Start RDNA3 SGLang (explicit approval)
+  GPU health status
+  GPU logs
+  Real text-generation test
+  Stop GPU model server
+```
+
+For the RX 7900 XT, the pinned **AMD-AIM/sglang-radeon** image passed the `sglang-rdna3 doctor` import/kernel tests, but real inference is *not* yet confirmed. The prior `Qwen/Qwen2.5-0.5B-Instruct` launch failed with `Temporary failure in name resolution` for `huggingface.co`, so **do not assume the model started**. The new DNS preflight checks the container's resolution and HTTPS handshake **before** starting a GPU model server. It never silently changes Docker daemon DNS or bypasses Pi-hole. If it fails, compare the host's `getent hosts huggingface.co` with Docker resolver settings (`docker info`, `/etc/resolv.conf`, and `docker network inspect bridge`) and investigate your local DNS forwarder. A one-time diagnostic override is available with `gpu-dns-check DNS_IP`; it is a test, not a persistent DNS change.
+
+The GPU server uses the optional `compose.gpu.yaml` overlay under **the same Compose project**. It binds **127.0.0.1:30000** by default, keeps weights in a named `rdna3-model-cache` volume, and never starts just by switching profiles. The GPU image pull and model download are user-initiated. Be aware that a previous manually started container named `zarzysseus-sglang-test` may occupy port 30000: inspect `docker ps -a --filter name=zarzysseus-sglang-test` before starting the managed service.
+
+If you already have the kit deployed on ZimaOS, point V11.1 to the *existing* directory and run `docker-kit-sync` **preview**, followed by `docker-kit-sync apply` when satisfied. The upgrade includes the new optional overlay but preserves `.env`, workspace, and persistent model volumes. Review your current Compose edits in the generated backups before starting the updated stack.
+
+Use the read-only CLI checks after switching to Docker Full:
+
+```bash
+bash ./zarzysseus.sh docker gpu-doctor      # May request permission to pull image
+bash ./zarzysseus.sh docker gpu-dns-check   # No model download
+bash ./zarzysseus.sh docker gpu-start       # Explicit GPU + image approval; may download model
+bash ./zarzysseus.sh docker gpu-status      # Only READY when /health responds
+bash ./zarzysseus.sh docker gpu-logs        # Logs are diagnostic; model may still be starting
+bash ./zarzysseus.sh docker gpu-test        # Only PASS on real generated assistant text
+bash ./zarzysseus.sh docker gpu-stop        # Preserves downloaded weights
+```
+
+**CPU-only ZimaOS does not need these GPU commands.** Leave Docker=CPU and use your installed `qwen3.5-zarzysseus-cpu:4b` or the lighter agent profile. For a model like `google/tipsv2-g14`, download success never implies chat compatibility: it is a non-generative image/text encoder and needs a task-specific interface.
+
+---
+
+## V11: One launcher, Native and Docker modes
+
+**The Linux edition now asks you to pick a management mode on its first interactive run.** The setting is saved at `~/.config/zarzysseus/runtime-mode`; you can change it later from the main menu or the `mode` command. It does **not** convert a native install into a container, migrate data, or delete either stack. Windows currently keeps its existing native PowerShell TUI; the V11 Docker selector is Linux-only.
+
+### Quick start: choose your mode in the TUI
+
+Unzip the **complete V11 release folder** in a persistent location. Do not copy only the root `.sh` if you want Docker features: the `docker/` folder contains the Compose stack, model profiles, and verified container bridge.
+
+```text
+$ bash ./zarzysseus.sh
+
+=== ZARZYSSEUS FIRST START ===
+  1) Native Linux — host Python, services, GPU runtimes
+  2) Docker — isolated Odysseus + CPU Ollama (good for ZimaOS)
+  0) Exit
+```
+
+The modes have **matching top-level categories**, so installation, model management, skills, MCP, diagnostics, and networking appear in familiar places. Individual choices use each mode's real implementation. Docker does not change host GPU drivers, install system packages, run the native systemd stack, or expose host directories without explicit mounts. Such entries explain the limitation instead of pretending to work.
+
+```text
+              ZARZYSSEUS
+             /           \
+     Native Linux        Docker / ZimaOS
+   ┌────────────────┐  ┌───────────────────────┐
+   │ Install/update │  │ CPU Docker install    │
+   │ systemd + venv │  │ Compose + CPU Ollama  │
+   │ Model backends │  │ Ollama + AMD doctor*  │
+   │ Skills/MCP     │  │ Container Skills/MCP  │
+   │ Browser Agent  │  │ Container Agent tools │
+   └────────────────┘  └───────────────────────┘
+
+  * AMD RDNA3 doctor is an optional test, not a model server.
+```
+
+From **Native main menu → SWITCH TO DOCKER MODE** or **Docker main menu → SWITCH TO NATIVE MODE**, switch immediately to the corresponding menu. You can also use:
+
+```bash
+bash ./zarzysseus.sh mode status
+bash ./zarzysseus.sh mode docker
+bash ./zarzysseus.sh mode native
+bash ./zarzysseus.sh docker status         # One-off Docker command
+bash ./zarzysseus.sh native status         # One-off native command
+```
+
+### Existing ZimaOS CPU kit: preserve your installation
+
+If you already ran the separate `zarzysseus-cpu-kit` on your fourth-generation i7, **do not launch the new bundled Compose stack on top of it**. Point V11 at the *existing* folder and preview the upgrade. Use the actual path on your server:
+
+```bash
+bash ./zarzysseus.sh docker-path "$HOME/zarzysseus-cpu-starter-kit/zarzysseus-cpu-kit"
+bash ./zarzysseus.sh docker-kit-sync          # READ-ONLY preview
+bash ./zarzysseus.sh docker-kit-sync apply    # Type SYNC to approve
+bash ./zarzysseus.sh mode docker
+bash ./zarzysseus.sh                           # Open the Docker TUI
+```
+
+`docker-kit-sync apply` saves modified kit source into `.zarzysseus-kit-backups/<timestamp>/` first. It **never copies or removes** `.env`, `workspace/`, `config/searxng/`, or Docker named volumes, so your manually configured port `7012`, bind address, app data, Ollama models, and credentials stay in place. Review custom Compose changes in the preview/backups before accepting: the Compose file itself *is* replaced. This is a kit-file upgrade, not a container recreation. When convenient, choose **Service Management → Start Odysseus** to recreate with the new toolkit bind mount, and **Install / Update → Install/refresh toolkit helper** to prepare the matching checksum-verified repair helpers.
+
+If you do not have an existing kit, leave `docker-path` unset. The unified launcher uses the bundled `docker/` stack. Enter **Docker → Install / Update → Install complete CPU stack**, review its download notice, and type `INSTALL` to provision the quality model, Docker services, and toolkit. Image and model downloads are never performed merely by opening the TUI. On ZimaOS, Docker access may request your sudo password if your account cannot access the daemon directly. **Do not run the native Zarzysseus installer as root.**
+
+### Docker menu walkthroughs
+
+| Feature | Docker TUI path | Result / limits |
+| :--- | :--- | :--- |
+| Install Odysseus | **Install / Update → Install complete CPU stack** | Consent-based Compose stack and Qwen3.5 4B CPU profile |
+| Start/restart/stop | **Service Management** | Controls the existing Odysseus container, not the host's systemd service |
+| Download a CPU model | **Ollama Management → Install Qwen3.5 CPU quality profile**, or **Pull a named model** | Explicit downloads to the persistent Ollama named volume |
+| Compare models | **Model Manager / Hardware Fit → Skill-aware model advisor** | Model advice and existing inventory; test quality on your i7 |
+| Use the original CPU benchmarks | **Model Manager / Hardware Fit → Benchmark quality model** | Measures local latency and tool-format proposals; does not execute tools |
+| Install skills | **Skills.sh / Agent Skills → Search / Install selected skill** | Runs only supported toolkit helpers inside the app container |
+| Provision MCP | **Skills.sh / Agent Skills → Approve/setup dependencies**, or **MCP / FreeMCP → MCP setup** | Consent and declaration checks remain mandatory |
+| Cookbook | **Diagnostics → Cookbook status / progress repair** | Version-sensitive source checks; unsupported patches fail closed |
+| Agent issues | **Diagnostics → Docker + Agent + skills doctor** | Reports repair/tool readiness; live browser/screenshot runs still require manual verification |
+| LAN/Tailscale access | **Network Discoverability** | Edit your existing `.env` `APP_BIND` and `APP_ORIGIN`; enable authentication and restrict access |
+| Radeon RDNA3 | **Model Runtimes → AMD RDNA3 Docker diagnostics** | Only for an AMD host with `/dev/kfd`; asks before pulling pinned image; no model served |
+| Hugging Face files | **Hugging Face / Model Files → Model advisor** | No unsupported HF encoder advertised as an ordinary chat server |
+| Native-only features | **MLX-LM / driver or OS package operations** | Explains limitation and directs you to native mode |
+
+**CPU profile defaults** from the attached kit: `qwen3.5-zarzysseus-cpu:4b`, Ollama CPU only, context 4096, two threads, and Thinking off for that exact profile. Your fourth-generation i7 with 16 GB DDR3 can run the model, but tool calls and longer prompts may be slow. Keep the existing `.env` resource limits unless benchmarking justifies a change. Other CPU profiles (`agent`, `moe`) are optional downloads.
+
+### Host/runtime readiness and the Radeon findings
+
+The optional Docker **`gpu-doctor`** tests the RDNA3-compatible SGLang image by immutable SHA-256 image digest with `/dev/kfd` and `/dev/dri`. The successful RX 7900 XT doctor output established kernel/import compatibility—not server readiness or text generation. Docker mode does not install GPU kernels into the ZimaOS host, and on a CPU-only host it explicitly says to use Ollama instead. For an already running *local* test inference server, **`gpu-readiness`** checks `/health` and `/v1/models`; a genuine generation request is still needed to establish inference success.
+
+The earlier native SGLang environment contained a mismatched CUDA `sgl_kernel` wheel and missing AITER, and is intentionally **not repaired automatically**. Non-generative models such as `google/tipsv2-g14` need task-specific interfaces; neither the Docker menu nor GPU doctor pretends they can be launched as chat models. Do not overwrite your working Odysseus Python environment to solve a container problem.
+
+### What was tested—and what wasn't
+
+V11 has offline tests for the mode selector, persisted mode changes, CLI routing, menu category parity, dry-run/approved Docker kit sync, byte-preserved `.env`, checksum-verified bundled bridge, CPU model payload adapter, container source-guarded replay, and CLI argument handling. **Docker could not be launched in the build environment**, so installing and serving a real model on your ZimaOS server must still be verified. The CPU kit's *newer* Odysseus dispatch rejected portions of the legacy V3–V8 browser recovery chain; the bridge keeps those repairs optional and does not claim identical screenshot behavior until live tests pass.
 
 ## Agent reliability repair and diagnostics (Linux and Windows)
 
@@ -1006,13 +1071,23 @@ Set `ZARZYSSEUS_DOCKER_AUTO_INSTALL=0` to disable **automatic installation durin
 
 ## Linux installation
 
-Run this in a Linux terminal:
+**Recommended (Native or Docker):** use the [curl one-liner near the top](#start-on-linux-with-curl-one-line). It downloads the complete repository and opens the TUI. The files stay in `~/.local/share/zarzysseus/`, so Docker mode can find its Compose files and you can launch it again later.
+
+**Already installed?** To reopen the same menu without downloading again:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zarzorr69/zarzyssues/main/zarzysseus.sh -o zarzysseus.sh && chmod +x zarzysseus.sh && ./zarzysseus.sh
+bash "$HOME/.local/share/zarzysseus/zarzysseus.sh"
 ```
 
-The script is downloaded before execution so its interactive TUI retains terminal input. The URL assumes the public repository's default branch is `main` and `zarzysseus.sh` is at its root.
+**Native-only shortcut:** if you only want the single Bash launcher and do *not* need the bundled Docker stack, you can download just the script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zarzorr69/zarzyssues/main/zarzysseus.sh -o zarzysseus.sh && bash ./zarzysseus.sh
+```
+
+This shorter command is **not a complete Docker installation**: choosing Docker requires the accompanying `docker/` folder from the full repository. Use the recommended archive command instead for first-time setup on ZimaOS.
+
+**Before you run it:** You need `bash`, `curl`, and `tar` for the full one-liner, internet access to GitHub, and enough free space for any models you later choose. The installer may ask for elevated permissions when you explicitly install dependencies. The command downloads code from the public repository's current `main` branch and runs it; review the source first if you prefer. Repeating the archive command can overwrite files inside the *launcher source folder*, so keep your own edits or backups outside that folder. It does not intentionally remove Docker volumes or Odysseus model data.
 
 ### Linux distribution support
 
@@ -1460,7 +1535,7 @@ A model's final answer alone is not proof. In Agent Mode, explicitly request an 
 
 ## Changelog
 
-A quick history of Zarzysseus releases. For setup steps, use the [guided TUI walkthroughs](#guided-walkthroughs-use-the-tui-first); for platform limits and verification status, follow the linked feature documentation. A feature being documented does not mean it has been live-tested on every operating system or backend.
+A quick history of Zarzysseus releases. **Documentation update:** the README now opens with a full-project curl quick start, beginner-friendly Native/Docker setup paths, and TUI-first guidance. No runtime version was changed by this documentation-only update. For setup steps, use the [guided TUI walkthroughs](#guided-walkthroughs-use-the-tui-first); for platform limits and verification status, follow the linked feature documentation. A feature being documented does not mean it has been live-tested on every operating system or backend.
 
 | Version | Highlights | Details |
 | :--- | :--- | :--- |
