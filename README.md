@@ -8,6 +8,8 @@
 
 Zarzysseus is a companion tool, **not** an alternative copy of Odysseus. You choose when to install services, download models, or approve third-party tools.
 
+> **V11.2 ZimaOS update:** Docker's Install/Update confirmation no longer crashes when it is called with one argument. Docker mode now offers a full-screen arrow-key menu in compatible SSH terminals, with a numbered fallback. The Native/Full AMD RDNA3 doctor uses the isolated Docker runtime without changing your Docker hardware profile. [Read the details](#v112--zimaos-install-and-tui-reliability).
+
 ## 🧭 Quick links
 
 ### Start on Linux with curl (one line)
@@ -107,7 +109,7 @@ Want the menus rather than commands? Start with the **[step-by-step TUI walkthro
 
 | Latest release | Previous milestones |
 | :--- | :--- |
-| 🆕 **[V11.1 — Native/Docker × CPU-only/Full](#v111--two-independent-switches-deployment--hardware)** | 🐳 [V11 — Unified Native/Docker launcher](#v11-one-launcher-native-and-docker-modes) |
+| 🆕 **[V11.2 — ZimaOS installation and interactive menus](#v112--zimaos-install-and-tui-reliability)** | 🐳 [V11 — Unified Native/Docker launcher](#v11-one-launcher-native-and-docker-modes) |
 | 📖 **[Read the complete changelog →](#changelog)** | 🛠️ [Cookbook V10.2.1 progress hotfix](#v1021--cookbook-progress-compatibility-hotfix) |
 
 
@@ -689,6 +691,35 @@ For Windows use the equivalent `zarzysseus.ps1 chat-continuity-fix` command. Thi
 Run the installer in **Windows PowerShell 5.1+**, not by double-clicking the `.ps1`. Use the [download-to-file installation commands](#windows-installation) so the menu keeps terminal input. If WinGet or Git/Python/Ollama is missing, let the **confirmed install** preflight set up supported prerequisites; restart PowerShell afterward if the PATH changes. Docker Desktop may require WSL 2/virtualization and a reboot. The included `-ExecutionPolicy Bypass` applies **only to that invocation**, not system-wide. Windows does not support the full Linux GPU/backend or skills.sh marketplace feature set yet. [Windows feature matrix](#windows-support).
 
 > **Before sharing diagnostics:** remove tokens, private URLs, filenames containing personal data, and contents of browser pages. Read-only commands above are intended to inspect state; setup, repair, download, start and restart commands can modify services, dependencies or Odysseus's guarded source files. Never bypass an Agent tool-approval dialog merely to make a screenshot test pass.
+
+## V11.2 — ZimaOS install and TUI reliability
+
+This is a small compatibility release; it **does not replace** the V8 browser workflow, your Docker CPU models, or any persistent Odysseus data.
+
+### What changed
+
+- **ZimaOS installation:** Fixed the Docker helper's confirmation prompt. Previously, `Install Odysseus + CPU model` failed with `line 66: $2: unbound variable` before running the setup.
+- **Docker menu navigation:** A full-screen, arrow-key menu now runs when SSH provides an interactive ANSI terminal (including compatible Termius sessions). Use **Up/Down**, **Enter**, or **Q**. Menu actions return to the normal terminal to show install logs and prompts.
+- **Numbered-menu fallback:** Automatically used when input/output are not TTYs or `TERM=dumb`. Force the simpler menu with `ZARZYSSEUS_MENU_STYLE=plain` if the SSH client cannot render ANSI reliably.
+- **AMD Radeon doctor:** In **Native + Full**, go to **Diagnostics → AMD RDNA3 GPU Runtime Doctor**, or run `bash ./zarzysseus.sh native-gpu-doctor`. It runs an isolated, opt-in Docker test without changing the saved Docker CPU/Full selection. CPU-only hosts should not use it.
+- **Container tool integrity:** Refreshed the bundled toolkit and SHA-256 validation used by the Docker bridge; no browser/MCP/Cookbook feature was removed.
+
+### ZimaOS: where to download Zarzysseus
+
+Some ZimaOS accounts have `$HOME=/DATA` but lack write permission to `/DATA/.local/share`. Avoid changing permissions on the whole `/DATA` directory. Use a dedicated folder instead:
+
+```bash
+sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 755 /DATA/zarzysseus-unified && curl -fL --retry 3 https://github.com/zarzorr69/zarzyssues/archive/refs/heads/main.tar.gz -o /DATA/zarzysseus-unified/source.tar.gz && tar -xzf /DATA/zarzysseus-unified/source.tar.gz -C /DATA/zarzysseus-unified --strip-components=1 && bash /DATA/zarzysseus-unified/zarzysseus.sh
+```
+
+When your Docker CPU kit is already installed, point Zarzysseus at it rather than starting a second instance. Preview changes before applying:
+
+```bash
+bash /DATA/zarzysseus-unified/zarzysseus.sh docker-kit-sync
+bash /DATA/zarzysseus-unified/zarzysseus.sh docker-kit-sync apply  # review first; enter SYNC to confirm
+```
+
+Your `.env`, credentials, existing models, workspaces, and named Docker volumes stay in place. **A successful TUI/install simulation isn't proof that every model works on every CPU.** Verify services and Ollama models after applying a kit update.
 
 ## V11.1 — Two independent switches: deployment + hardware
 
@@ -1556,6 +1587,13 @@ The Windows edition now **installs Docker Desktop during committed app installat
 A model's final answer alone is not proof. In Agent Mode, explicitly request an available tool (for example, `Call get_workspace now`) and inspect the Odysseus tool-execution UI/logs for a native tool call and its result. An endpoint flag of `True` and `native_tools=True` only mean the model was **offered** schemas; a valid direct Ollama call does not guarantee that the full Agent request invokes one. Tool approval and security rules still apply.
 
 ## Changelog
+
+### V11.2 — ZimaOS installer, Docker TUI and native AMD doctor
+- Fixed one-argument Docker install approval crash.
+- Added Docker full-screen arrow-key menu with numbered fallback.
+- Made isolated RDNA3 doctor available from Native/Full without changing Docker profile.
+- Updated the SHA-verified Docker toolkit bridge.
+
 
 A quick history of Zarzysseus releases. **Documentation update:** the README now opens with a full-project curl quick start, beginner-friendly Native/Docker setup paths, and TUI-first guidance. No runtime version was changed by this documentation-only update. For setup steps, use the [guided TUI walkthroughs](#guided-walkthroughs-use-the-tui-first); for platform limits and verification status, follow the linked feature documentation. A feature being documented does not mean it has been live-tested on every operating system or backend. The README also includes a Windows PowerShell `curl.exe` quick start for the native Windows TUI.
 

@@ -211,6 +211,14 @@ if [[ "${ZARZYSSEUS_CONTAINER_MODE:-0}" != 1 ]]; then
                 status) _zz_show_mode ;; native|docker) _zz_set_mode "$2" ;; *) echo 'Usage: mode [status|native|docker]' >&2; exit 2 ;; esac
             exit $? ;;
         mode-status) _zz_show_mode; exit $? ;;
+        native-gpu-doctor)
+            # Native FULL users may diagnose the isolated AMD Docker runtime
+            # without switching their saved Docker CPU/Full profile.
+            [[ "$(_zz_read_profile native)" == full ]] || { echo 'Native CPU-only profile: GPU diagnostics disabled. Set native Full first.' >&2; exit 2; }
+            [[ -f "$_ZZ_LAUNCH_DIR/docker/zarzysseus-docker.sh" ]] || { echo 'Bundled Docker toolkit missing. Download the complete release.' >&2; exit 2; }
+            exec env ZARZYSSEUS_KIT_DIR="$_ZZ_LAUNCH_DIR/docker" ZARZYSSEUS_PROFILE=full \
+                bash "$_ZZ_LAUNCH_DIR/docker/zarzysseus-docker.sh" gpu-doctor ;;
+
         profile)
             case "${2:-status}" in
                 status) printf 'Native: '; _zz_read_profile native; printf 'Docker: '; _zz_read_profile docker ;;
@@ -17397,7 +17405,7 @@ tui_diagnostics_menu() {
                 11) tui_model_default ;;
                 12) tui_help_screen ;;
                 13) tui_agent_menu ;;
-                14) _tui_run_command 'AMD RDNA3 isolated Docker doctor' docker gpu-doctor ;;
+                14) _tui_run_command 'AMD RDNA3 isolated runtime doctor (native full)' native-gpu-doctor ;;
                 15) return 0 ;;
             esac
         else

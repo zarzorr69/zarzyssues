@@ -60,10 +60,11 @@ kit_state() {
     echo '=== Docker toolkit ==='; bridge status || echo 'Toolkit unavailable: start app and choose Install toolkit.'
 }
 require_confirmation() {
-    local prompt="$1" reply
+    local prompt="${1:?Approval keyword required}" reply
+    local description="${2:-This action may download images/models or change the Docker stack.}"
     if [[ "${ZARZYSSEUS_CONFIRM:-}" == "$prompt" ]]; then return 0; fi
     [[ -t 0 ]] || { printf 'Approval required: %s. Run interactively.\n' "$prompt" >&2; return 2; }
-    printf '%s\nType %s to proceed: ' "$2" "$prompt"
+    printf '%s\nType %s to proceed: ' "$description" "$prompt"
     read -r reply || return 2
     [[ "$reply" == "$prompt" ]] || { echo 'Cancelled.'; return 2; }
 }
@@ -291,19 +292,106 @@ HELP
     esac
 }
 
+# Docker's menu has an interactive ANSI selector on real terminals, keeping a
+# numbered fallback for TERM=dumb, pipes and accessibility preferences.
+_ZD_TUI_ACTIVE=0
+_zd_restore() {
+    if [[ "$_ZD_TUI_ACTIVE" == 1 ]]; then
+        printf '\033[?25h\033[?1049l'
+        _ZD_TUI_ACTIVE=0
+    fi
+}
+# EXIT also restores the terminal if a command or connection ends unexpectedly.
+trap '_zd_restore' EXIT
+trap '_zd_restore; exit 130' INT
+trap '_zd_restore; exit 143' TERM
+_zd_choose() {
+    local title="$1"; shift
+    local -a items=("$@")
+    local count=${#items[@]} selected=1 typed="" key="" extra="" size="" lines=24 cols=80
+    local start end i row visible
+    ZD_SELECTION=0
+    if [[ "${ZARZYSSEUS_MENU_STYLE:-auto}" == plain || ! -t 0 || ! -t 1 || "${TERM:-dumb}" == dumb ]]; then
+        printf '\n=== %s ===\n' "$title"
+        for ((i=1; i<=count; i++)); do printf '%2d %s\n' "$i" "${items[i-1]}"; done
+        printf '%2d %s\n' 0 'BACK / EXIT'
+        read -r -p "Select [0-$count]: " ZD_SELECTION || { ZD_SELECTION=0; return 0; }
+        [[ "$ZD_SELECTION" =~ ^[0-9]+$ ]] && (( ZD_SELECTION <= count )) || { echo 'Invalid choice.'; ZD_SELECTION=-1; }
+        return 0
+    fi
+    if [[ "$_ZD_TUI_ACTIVE" == 0 ]]; then
+        printf '\033[?1049h\033[?25l'
+        _ZD_TUI_ACTIVE=1
+    fi
+    while true; do
+        size="$(stty size < /dev/tty 2>/dev/null || echo '24 80')"
+        read -r lines cols <<< "$size"
+        [[ "$lines" =~ ^[0-9]+$ ]] || lines=24
+        [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+        (( lines < 8 )) && lines=8
+        (( cols < 22 )) && cols=22
+        visible=$((lines - 8)); ((visible < 2)) && visible=2
+        start=1
+        if (( selected > visible )); then start=$((selected - visible + 1)); fi
+        end=$((start + visible - 1)); (( end > count )) && end=count
+        printf '\033[H\033[2J\n'
+        printf '\033[1;36m  Z A R Z Y S S E U S  •  DOCKER\033[0m\n'
+        printf '  %s\n' "$title"
+        printf '%s\n' '  ───────────────────────────────────────────'
+        printf '  [↑/↓] Navigate  [Enter] Select  [Q] Back  [digits+Enter]\n\n'
+        if ((start > 1)); then printf '    ▲ More above\n'; fi
+        for ((i=start; i<=end; i++)); do
+            if ((i == selected)); then
+                printf '\033[7m  ▶ %2d  %-*.*s\033[0m\n' "$i" "$(( cols - 9 ))" "$(( cols - 9 ))" "${items[i-1]}"
+            else
+                printf '    %2d  %.*s\n' "$i" "$(( cols - 9 ))" "${items[i-1]}"
+            fi
+        done
+        if ((end < count)); then printf '    ▼ More below\n'; fi
+        printf '\n    0  BACK / EXIT\n'
+        if [[ -n "$typed" ]]; then printf '  Choice: %s\n' "$typed"; fi
+        key=''; IFS= read -rsn1 key < /dev/tty || { _zd_restore; return 1; }
+        case "$key" in
+            $'\e')
+                extra=''; IFS= read -rsn2 -t 0.12 extra < /dev/tty || :
+                case "$extra" in
+                    '[A') ((selected--)); (( selected < 1 )) && selected=$count; typed='' ;;
+                    '[B') ((selected++)); (( selected > count )) && selected=1; typed='' ;;
+                    *) ZD_SELECTION=0; _zd_restore; return 0 ;;
+                esac ;;
+            [qQ]) ZD_SELECTION=0; _zd_restore; return 0 ;;
+            '')
+                if [[ -n "$typed" ]]; then
+                    if (( 10#$typed <= count )); then ZD_SELECTION=$((10#$typed)); _zd_restore; return 0; fi
+                    typed=''
+                else
+                    ZD_SELECTION=$selected; _zd_restore; return 0
+                fi ;;
+            [0-9])
+                if [[ "$typed" == 0 ]]; then typed="$key"; else typed="${typed}${key}"; fi
+                if (( ${#typed} > 3 )); then typed="$key"; fi
+                if (( 10#$typed >= 1 && 10#$typed <= count )); then selected=$((10#$typed)); fi ;;
+            [kK]) ((selected--)); ((selected < 1)) && selected=$count; typed='' ;;
+            [jJ]) ((selected++)); ((selected > count)) && selected=1; typed='' ;;
+        esac
+    done
+}
+
 # Use the same menu categories as the native edition. Submenus give Docker's
 # real equivalent or explain scope limitations; never silently run host-native.
 menu() {
     local option
+    local -a menu_items=(
+        'INSTALL / UPDATE' 'SERVICE MANAGEMENT' 'MODEL RUNTIMES'
+        'MODEL MANAGER / HARDWARE FIT' 'OLLAMA MANAGEMENT'
+        'MLX-LM MANAGEMENT (native/macOS only)' 'HUGGING FACE / MODEL FILES'
+        'SKILLS.SH / AGENT SKILLS' 'MCP / FREEMCP'
+        'DIAGNOSTICS / TOOLS / ADVANCED' 'NETWORK DISCOVERABILITY'
+        'SWITCH TO NATIVE MODE' 'SWITCH CPU-ONLY / FULL PROFILE'
+    )
     while true; do
-        printf '\n=== ZARZYSSEUS — DOCKER MODE — %s PROFILE ===\n' "${profile^^}"
-        printf '%s\n' ' 1 INSTALL / UPDATE' ' 2 SERVICE MANAGEMENT' ' 3 MODEL RUNTIMES' \
-            ' 4 MODEL MANAGER / HARDWARE FIT' ' 5 OLLAMA MANAGEMENT' \
-            ' 6 MLX-LM MANAGEMENT (native/macOS only)' ' 7 HUGGING FACE / MODEL FILES' \
-            ' 8 SKILLS.SH / AGENT SKILLS' ' 9 MCP / FREEMCP' \
-            '10 DIAGNOSTICS / TOOLS / ADVANCED' '11 NETWORK DISCOVERABILITY' \
-            '12 SWITCH TO NATIVE MODE' '13 SWITCH CPU-ONLY / FULL PROFILE' ' 0 EXIT'
-        read -r -p 'Select [0-13]: ' option || return 0
+        _zd_choose "ZARZYSSEUS — DOCKER MODE — ${profile^^} PROFILE" "${menu_items[@]}" || return 0
+        option="$ZD_SELECTION"
         case "$option" in
             1) submenu 'INSTALL / UPDATE' 'Install Odysseus + CPU model (always available)|install' 'Install/refresh toolkit helper|toolkit-install' 'Check current status|status' ;;
             2) submenu 'SERVICES' 'Start Odysseus|start' 'Stop services|stop' 'Restart Odysseus|restart' 'Show status|status' 'Show logs|logs' 'Stop containers, retain volumes|down' ;;
@@ -341,15 +429,14 @@ menu() {
     done
 }
 submenu() {
-    local title="$1" select idx=1 item name action; shift
+    local title="$1" select idx item action; shift
+    local -a labels=()
+    for item in "$@"; do labels+=("${item%%|*}"); done
     while true; do
-        printf '\n=== %s ===\n' "$title"
-        idx=1
-        for item in "$@"; do printf '%2d %s\n' "$idx" "${item%%|*}"; idx=$((idx+1)); done
-        printf ' 0 BACK\n'
-        read -r -p 'Choose: ' select || return 0
+        _zd_choose "$title" "${labels[@]}" || return 0
+        select="$ZD_SELECTION"
         [[ "$select" == 0 ]] && return 0
-        [[ "$select" =~ ^[0-9]+$ ]] && (( select >= 1 && select <= $# )) || { echo 'Invalid choice.'; continue; }
+        ((select>=1 && select<=$#)) || { echo 'Invalid choice.'; continue; }
         item="${@:$select:1}"
         action="${item#*|}"
         case "$action" in
@@ -363,6 +450,7 @@ submenu() {
         esac
     done
 }
+
 if [[ $# == 0 ]]; then
     if [[ -t 0 && -t 1 ]]; then menu; else dispatch help; fi
 else
