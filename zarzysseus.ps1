@@ -722,13 +722,25 @@ function _zarDlSync(el, task, raw) {
 }
 '''
 
+
+def change_line(t, line, added, label):
+    # A complete line is a safer, version-tolerant anchor than a fixed count of
+    # leading spaces. Refuse ambiguous or absent matches; preserve indentation.
+    import re
+    matches = list(re.finditer(r'(?m)^([ \t]*)' + re.escape(line) + r'$', t))
+    if len(matches) != 1:
+        raise ValueError(f'{label}: upstream anchor count {len(matches)}, expected 1; no changes made')
+    match = matches[0]
+    indent = match.group(1)
+    return t[:match.start()] + indent + added + '\n' + indent + line + t[match.end():]
+
 def patch(t):
     if MARKER in t:raise ValueError('patch marker already present without verified manifest')
     t=change(t,'function _downloadBadgeText(progress) {',JS+'\nfunction _downloadBadgeText(progress) {','helper insertion')
     t=change(t,"      const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');",
         "      _zarDlSync(el, task, task.output || el.querySelector('.cookbook-output-pre')?.textContent || '');\n      const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');",'existing card update')
-    t=change(t,"     const _waveEl = el.querySelector('.cookbook-task-wave');",
-        "     _zarDlSync(el, task, task.output || '');\n     const _waveEl = el.querySelector('.cookbook-task-wave');",'new card update')
+    t=change_line(t,"const _waveEl = el.querySelector('.cookbook-task-wave');",
+        "_zarDlSync(el, task, task.output || '');",'new card update')
     t=change(t,"(_mobileCollapseDefault && !_shouldAutoExpandTaskOutput(task)) ? ' cookbook-task-collapsed' : ''",
         "(task.type === 'download' ? !_expandedTaskIds.has(task.sessionId) : (_mobileCollapseDefault && !_shouldAutoExpandTaskOutput(task))) ? ' cookbook-task-collapsed' : ''",'default download log collapse')
     t=change(t,"    const _streamExpanded = _wrapForStream && !_wrapForStream.classList.contains('cookbook-task-collapsed');",

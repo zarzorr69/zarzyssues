@@ -6,7 +6,7 @@ spec=importlib.util.spec_from_file_location('p',root/'zarzysseus_cookbook_progre
 fixture='''function _downloadBadgeText(progress) { return progress; }
 function testCards(el,task) {
       const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
-     const _waveEl = el.querySelector('.cookbook-task-wave');
+    const _waveEl = el.querySelector('.cookbook-task-wave');
      const a = `<div class="cookbook-output-wrap cookbook-task-collapsible${(_mobileCollapseDefault && !_shouldAutoExpandTaskOutput(task)) ? ' cookbook-task-collapsed' : ''}">`;
     const _streamExpanded = _wrapForStream && !_wrapForStream.classList.contains('cookbook-task-collapsed');
   if (!_isRunningTabVisible() || !wrap || wrap.classList.contains('cookbook-task-collapsed')) return;
@@ -18,6 +18,21 @@ function testCards(el,task) {
         }
 }
 '''
+
+# Upstream revision 9d5c0319 uses four spaces on the new-card line.
+# Verify all supported indentation variants and still fail closed on duplicates.
+for indent in (4,5,6):
+    original=fixture.replace("    const _waveEl = el.querySelector('.cookbook-task-wave');", " "*indent+"const _waveEl = el.querySelector('.cookbook-task-wave');")
+    altered=p.patch(original)
+    assert (" "*indent+"_zarDlSync(el, task, task.output || '');") in altered
+    assert (" "*indent+"const _waveEl = el.querySelector('.cookbook-task-wave');") in altered
+try:
+    p.patch(fixture.replace("    const _waveEl = el.querySelector('.cookbook-task-wave');", ""))
+except ValueError as error:
+    assert "new card update" in str(error)
+else:
+    raise AssertionError("missing anchor must fail closed")
+
 with tempfile.TemporaryDirectory() as td:
     rootp=Path(td);path=rootp/p.P;path.parent.mkdir(parents=True);path.write_text(fixture)
     assert p.run(rootp,'install')==0

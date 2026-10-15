@@ -1,0 +1,138 @@
+name: zarzysseus-cpu
+
+services:
+  cpu-ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OLLAMA_PORT:-11435}:11434"
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_MAX_QUEUE: "8"
+      OLLAMA_CONTEXT_LENGTH: "4096"
+      OLLAMA_KEEP_ALIVE: ${MODEL_KEEP_ALIVE:-30m}
+    volumes:
+      - ollama-models:/root/.ollama
+      - ./models:/profiles:ro
+    mem_limit: ${MODEL_RAM_LIMIT:-6g}
+    cpus: ${MODEL_CPU_LIMIT:-3.0}
+    healthcheck:
+      test: [CMD, ollama, list]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+    networks: [cpu-private]
+
+  bench:
+    image: ${BENCH_IMAGE:-python:3.12-alpine}
+    profiles: [tools]
+    entrypoint: [python3, /kit/benchmark.py]
+    environment:
+      MODEL_KEEP_ALIVE: ${MODEL_KEEP_ALIVE:-30m}
+    volumes:
+      - ./:/kit:ro
+    depends_on:
+      cpu-ollama:
+        condition: service_healthy
+    networks: [cpu-private]
+
+  odysseus:
+    image: ${ODYSSEUS_IMAGE:-ghcr.io/odysseus-dev/odysseus:latest}
+    profiles: [app]
+    restart: unless-stopped
+    entrypoint: [/bin/sh, /cpu-kit/container-entrypoint.sh]
+    # The image's own entrypoint still performs setup and drops to PUID/PGID.
+    command: [python, /cpu-kit/launch_odysseus.py]
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7012}:7000"
+    environment:
+      OLLAMA_BASE_URL: http://cpu-ollama:11434
+      LLM_HOST: cpu-ollama
+      LLM_HOSTS: cpu-ollama
+      CHROMADB_HOST: chromadb
+      CHROMADB_PORT: "8000"
+      SEARXNG_INSTANCE: http://searxng:8080
+      DATABASE_URL: sqlite:///./data/app.db
+      AUTH_ENABLED: "true"
+      LOCALHOST_BYPASS: "false"
+      ALLOWED_ORIGINS: ${APP_ORIGIN:-http://localhost:7012,http://127.0.0.1:7012}
+      PUID: ${APP_UID:-999}
+      PGID: ${APP_GID:-1000}
+      FASTEMBED_MODEL: sentence-transformers/all-MiniLM-L6-v2
+      ODYSSEUS_WORKSPACE_DEFAULT: /workspace
+      ODYSSEUS_WORKSPACE_CONTAINER_ROOT: /workspace
+      CPU_PROFILE_GUARD: ${CPU_PROFILE_GUARD:-1}
+      MODEL_KEEP_ALIVE: ${MODEL_KEEP_ALIVE:-30m}
+      ZARZYSSEUS_OVERLAY: ${ZARZYSSEUS_OVERLAY:-1}
+    volumes:
+      - app-data:/app/data
+      - app-logs:/app/logs
+      - app-ssh:/app/.ssh
+      - app-hf-cache:/app/.cache/huggingface
+      - app-local:/app/.local
+      - ./workspace:/workspace
+      - ./launch_odysseus.py:/cpu-kit/launch_odysseus.py:ro
+      - ./zarzysseus_bridge.py:/cpu-kit/zarzysseus_bridge.py:ro
+      - ./toolkit/zarzysseus.sh:/cpu-kit/zarzysseus.sh:ro
+      - ./zarzysseus_overlay.py:/cpu-kit/zarzysseus_overlay.py:ro
+      - ./container-entrypoint.sh:/cpu-kit/container-entrypoint.sh:ro
+      - app-agent-skills:/app/.agents
+      - app-toolkit-config:/app/.config
+    mem_limit: ${APP_RAM_LIMIT:-3g}
+    cpus: ${APP_CPU_LIMIT:-1.5}
+    depends_on:
+      cpu-ollama:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+      searxng:
+        condition: service_healthy
+    networks: [cpu-private]
+
+  chromadb:
+    image: ${CHROMA_IMAGE:-chromadb/chroma:latest}
+    profiles: [app]
+    restart: unless-stopped
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      ANONYMIZED_TELEMETRY: "FALSE"
+    mem_limit: ${CHROMA_RAM_LIMIT:-768m}
+    cpus: "0.5"
+    networks: [cpu-private]
+
+  searxng:
+    image: ${SEARXNG_IMAGE:-docker.io/searxng/searxng:2026.9.25-12f8b6515@sha256:5286edb35782454ab8a102c5eff6b54bff745853191b46aeead95f225aa6dfb6}
+    profiles: [app]
+    restart: unless-stopped
+    volumes:
+      - ./config/searxng:/etc/searxng
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID, DAC_OVERRIDE]
+    mem_limit: ${SEARCH_RAM_LIMIT:-512m}
+    cpus: "0.5"
+    healthcheck:
+      test: [CMD-SHELL, 'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8080/'', timeout=5).read(1)"']
+      interval: 5s
+      timeout: 6s
+      retries: 24
+      start_period: 10s
+    networks: [cpu-private]
+
+networks:
+  cpu-private:
+    name: zarzysseus-cpu-private
+
+volumes:
+  ollama-models:
+  app-data:
+  app-logs:
+  app-ssh:
+  app-hf-cache:
+  app-local:
+  app-agent-skills:
+  app-toolkit-config:
+  chroma-data:

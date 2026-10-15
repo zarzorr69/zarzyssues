@@ -1,0 +1,6 @@
+FROM lfm2.5:8b-a1b-q4_K_M
+PARAMETER num_ctx 4096
+PARAMETER num_thread 2
+PARAMETER num_gpu 0
+PARAMETER num_batch 128
+PARAMETER num_predict 1024

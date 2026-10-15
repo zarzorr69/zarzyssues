@@ -1,6 +1,265 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# V11 Linux launch-mode router. Runs BEFORE host discovery, package-manager checks
+# and native install initialization. Docker mode never invokes native setup.
+# Host commands remain accessible explicitly via `native COMMAND`.
+_ZZ_LAUNCH_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+_ZZ_MODE_HOME="${ZARZYSSEUS_MODE_HOME:-${HOME}/.config/zarzysseus}"
+_ZZ_MODE_FILE="${_ZZ_MODE_HOME}/runtime-mode"
+_ZZ_DOCKER_FILE="${_ZZ_MODE_HOME}/docker-kit-dir"
+_ZZ_PROFILE_NATIVE="${_ZZ_MODE_HOME}/hardware-native"
+_ZZ_PROFILE_DOCKER="${_ZZ_MODE_HOME}/hardware-docker"
+
+_zz_profile_file() { if [[ "$1" == docker ]]; then printf '%s\n' "$_ZZ_PROFILE_DOCKER"; else printf '%s\n' "$_ZZ_PROFILE_NATIVE"; fi; }
+_zz_read_profile() {
+    local mode="${1:-native}" value="" f
+    f="$(_zz_profile_file "$mode")"
+    if [[ -n "${ZARZYSSEUS_HARDWARE_PROFILE:-}" ]]; then
+        value="$ZARZYSSEUS_HARDWARE_PROFILE"
+    elif [[ -r "$f" ]]; then IFS= read -r value < "$f" || :
+    fi
+    case "$value" in
+        cpu|full) printf '%s\n' "$value" ;;
+        '') [[ "$mode" == docker ]] && echo cpu || echo full ;;
+        *) echo "Invalid hardware profile in $f: $value" >&2; return 2 ;;
+    esac
+}
+_zz_set_profile() {
+    local mode="$1" profile="$2"
+    [[ "$mode" == docker || "$mode" == native ]] || { echo 'Mode must be native or docker.' >&2; return 2; }
+    [[ "$profile" == cpu || "$profile" == full ]] || { echo 'Hardware profile must be cpu or full.' >&2; return 2; }
+    _zz_write_config "$(_zz_profile_file "$mode")" "$profile"
+    printf '%s hardware profile saved: %s (no services restarted, no installs performed)\n' "$mode" "$profile"
+}
+_zz_choose_profile() {
+    local mode="$1" answer="" current
+    current="$(_zz_read_profile "$mode")" || return 2
+    printf 'Choose a hardware profile for %s (current: %s):\n' "$mode" "$current"
+    echo '  1) CPU-only — small model/runtime defaults; no GPU installation'
+    echo '  2) Full — all available compatible runtimes; GPU remains opt-in'
+    echo '  0) Keep current'
+    read -r -p 'Select hardware profile [1/2/0]: ' answer || return 2
+    case "$answer" in 1|cpu) _zz_set_profile "$mode" cpu ;; 2|full) _zz_set_profile "$mode" full ;; 0|'') return 0 ;; *) echo 'Invalid profile.' >&2; return 2 ;; esac
+}
+
+
+_zz_read_mode() {
+    local value
+    if [[ -n "${ZARZYSSEUS_EXEC_MODE:-}" ]]; then
+        value="$ZARZYSSEUS_EXEC_MODE"
+    elif [[ -r "$_ZZ_MODE_FILE" ]]; then
+        IFS= read -r value < "$_ZZ_MODE_FILE" || :
+    else
+        return 1
+    fi
+    case "$value" in native|docker) printf '%s\n' "$value" ;; *) return 1 ;; esac
+}
+_zz_write_config() {
+    local file="$1" value="$2" tmp
+    mkdir -p -- "$_ZZ_MODE_HOME"
+    chmod 700 "$_ZZ_MODE_HOME" 2>/dev/null || :
+    tmp="$(mktemp "${file}.XXXXXX")" || return
+    printf '%s\n' "$value" > "$tmp"
+    chmod 600 "$tmp" || { rm -f -- "$tmp"; return 1; }
+    mv -f -- "$tmp" "$file"
+}
+_zz_valid_kit() {
+    [[ -f "$1/compose.yaml" && -f "$1/run.sh" && -f "$1/zarzysseus-docker.sh" ]]
+}
+_zz_docker_dir() {
+    local candidate="" saved=""
+    if [[ -n "${ZARZYSSEUS_DOCKER_DIR:-}" ]]; then
+        candidate="$ZARZYSSEUS_DOCKER_DIR"
+    elif [[ -r "$_ZZ_DOCKER_FILE" ]]; then
+        IFS= read -r saved < "$_ZZ_DOCKER_FILE" || :
+        if [[ -n "$saved" ]]; then candidate="$saved"; fi
+    fi
+    if [[ -n "$candidate" ]]; then
+        if _zz_valid_kit "$candidate"; then (cd -- "$candidate" && pwd -P); return; fi
+        printf 'Configured Docker kit not found at: %s\nSet another with: %s docker-path /absolute/path/to/kit\n' "$candidate" "${BASH_SOURCE[0]}" >&2
+        return 2
+    fi
+    # Existing ZimaOS deployments win over a freshly extracted release.
+    # Avoid bringing up a second stack against the same Compose project name.
+    for candidate in "$HOME/zarzysseus-cpu-starter-kit/zarzysseus-cpu-kit" \
+        "$HOME/zarzysseus-cpu-kit" "$PWD/zarzysseus-cpu-kit" "$PWD" \
+        "$_ZZ_LAUNCH_DIR/docker" "$_ZZ_LAUNCH_DIR/zarzysseus-cpu-kit"; do
+        if _zz_valid_kit "$candidate"; then (cd -- "$candidate" && pwd -P); return; fi
+    done
+    printf 'Docker mode needs the Zarzysseus CPU kit.\n' >&2
+    printf 'Use the complete release folder or set: %s docker-path /absolute/path/to/existing/zarzysseus-cpu-kit\n' "${BASH_SOURCE[0]}" >&2
+    return 2
+}
+_zz_select_mode() {
+    local value=""
+    if ! [[ -t 0 && -t 1 ]]; then
+        printf 'No saved launch mode and no interactive terminal. Use: %s mode native|docker\n' "${BASH_SOURCE[0]}" >&2
+        return 2
+    fi
+    printf '\n=== ZARZYSSEUS FIRST START ===\nChoose which environment Zarzysseus should manage.\n'
+    printf '  1) Native Linux — host Python, services, GPU runtimes\n'
+    printf '  2) Docker — isolated Odysseus + CPU Ollama (good for ZimaOS)\n'
+    printf '  0) Exit (make no changes)\n'
+    while true; do
+        read -r -p 'Select mode [1/2/0]: ' value || return 2
+        case "$value" in
+            1|native) _zz_write_config "$_ZZ_MODE_FILE" native; break ;;
+            2|docker)
+                if _zz_docker_dir >/dev/null; then
+                    _zz_write_config "$_ZZ_MODE_FILE" docker; break
+                fi
+                echo 'Docker kit unavailable; use docker-path or the complete release.' ;;
+            0|q|Q) return 2 ;;
+            *) printf 'Choose 1, 2 or 0.\n' ;;
+        esac
+    done
+    _zz_choose_profile "$(_zz_read_mode)"
+}
+_zz_set_mode() {
+    local value="$1"
+    case "$value" in native|docker) ;; *) printf 'Choose native or docker.\n' >&2; return 2 ;; esac
+    if [[ "$value" == docker ]]; then
+        _zz_docker_dir >/dev/null || return 2
+    fi
+    _zz_write_config "$_ZZ_MODE_FILE" "$value"
+    printf 'Zarzysseus mode saved: %s\n' "$value"
+    printf 'Run %s to open the corresponding menu.\n' "${BASH_SOURCE[0]}"
+}
+_zz_sync_kit() {
+    local requested="${1:-status}" source="$_ZZ_LAUNCH_DIR/docker" target file tmp stamp reply
+    target="$(_zz_docker_dir)" || return 2
+    _zz_valid_kit "$source" || { echo 'The release Docker kit is not beside this launcher. Extract the full release.' >&2; return 2; }
+    if [[ "$target" == "$source" ]]; then
+        echo 'Already using the V11 bundled Docker kit; nothing to synchronize.'
+        return
+    fi
+    local -a files=(compose.yaml run.sh zarzysseus-docker.sh launch_odysseus.py \
+        zarzysseus_bridge.py zarzysseus_overlay.py container-entrypoint.sh \
+        benchmark.py .env.example models/Modelfile.agent models/Modelfile.quality \
+        models/Modelfile.moe toolkit/zarzysseus.sh compose.gpu.yaml)
+    printf 'Source release: %s\nExisting kit:   %s\n' "$source" "$target"
+    for file in "${files[@]}"; do
+        [[ -L "$target/$file" ]] && { echo "Refusing symlink target: $target/$file" >&2; return 2; }
+        [[ -f "$source/$file" ]] || { echo "Release file missing: $file" >&2; return 2; }
+        if [[ ! -f "$target/$file" ]]; then printf 'ADD    %s\n' "$file";
+        elif ! cmp -s -- "$source/$file" "$target/$file"; then printf 'UPDATE %s\n' "$file"; fi
+    done
+    if [[ "$requested" != apply ]]; then
+        echo 'Preview only. To back up and apply these kit files: docker-kit-sync apply'
+        echo 'Your .env, config/searxng, workspace, and Docker named volumes are never copied or removed.'
+        return
+    fi
+    if [[ ! -t 0 ]]; then
+        [[ "${ZARZYSSEUS_SYNC_CONFIRM:-}" == SYNC ]] || { echo 'Run interactively or explicitly set ZARZYSSEUS_SYNC_CONFIRM=SYNC.' >&2; return 2; }
+    else
+        printf 'Type SYNC to back up changed files and update the existing kit: '
+        read -r reply || return 2
+        [[ "$reply" == SYNC ]] || { echo 'Cancelled'; return 2; }
+    fi
+    stamp="$(date +%Y%m%d-%H%M%S)-$$"
+    local backups="$target/.zarzysseus-kit-backups/$stamp"
+    mkdir -p "$backups"
+    for file in "${files[@]}"; do
+        if [[ -f "$target/$file" ]] && cmp -s "$source/$file" "$target/$file"; then continue; fi
+        mkdir -p "$(dirname -- "$target/$file")"
+        if [[ -f "$target/$file" ]]; then
+            mkdir -p "$(dirname -- "$backups/$file")"
+            cp -p -- "$target/$file" "$backups/$file" || return
+        fi
+        tmp="$(mktemp "${target}/${file}.XXXXXX")" || return
+        cp -p -- "$source/$file" "$tmp" || { rm -f -- "$tmp"; return 2; }
+        mv -f -- "$tmp" "$target/$file" || return
+    done
+    printf 'Docker kit files updated. Backup: %s\n' "$backups"
+    echo 'Keep .env and model volumes. Run docker restart/recreate when ready; app image will use updated read-only toolkit mounts.'
+}
+
+_zz_show_mode() {
+    printf 'Saved mode: '; if [[ -r "$_ZZ_MODE_FILE" ]]; then cat "$_ZZ_MODE_FILE"; else printf 'not selected\n'; fi
+    printf 'Effective mode: '; _zz_read_mode || printf 'not selected\n'
+    printf 'Native hardware: '; _zz_read_profile native
+    printf 'Docker hardware: '; _zz_read_profile docker
+    printf 'Docker kit: '; _zz_docker_dir 2>/dev/null || printf 'not configured\n'
+}
+_zz_dispatch_docker() {
+    local dir
+    dir="$(_zz_docker_dir)" || return 2
+    # Don't silently run a stale kit against an updated host menu.
+    if [[ "${1:-}" == tui && -f "$_ZZ_LAUNCH_DIR/docker/toolkit/zarzysseus.sh" ]] \
+       && [[ "$dir" != "$_ZZ_LAUNCH_DIR/docker" ]] \
+       && ! cmp -s "$_ZZ_LAUNCH_DIR/docker/toolkit/zarzysseus.sh" "$dir/toolkit/zarzysseus.sh"; then
+        printf '\n[notice] Existing Docker kit differs from the V11 release.\n'
+        printf 'Review before upgrading: %s docker-kit-sync\n' "${BASH_SOURCE[0]}"
+        printf 'Then apply with:        %s docker-kit-sync apply\n\n' "${BASH_SOURCE[0]}"
+    fi
+    export ZARZYSSEUS_KIT_DIR="$dir"
+    export ZARZYSSEUS_PROFILE="$(_zz_read_profile docker)" || return 2
+    export ZARZYSSEUS_MODE_SWITCH_CMD="$_ZZ_LAUNCH_DIR/$(basename -- "${BASH_SOURCE[0]}")"
+    if [[ -f "$_ZZ_LAUNCH_DIR/docker/zarzysseus-docker.sh" ]]; then
+        exec bash "$_ZZ_LAUNCH_DIR/docker/zarzysseus-docker.sh" "$@"
+    fi
+    exec bash "$dir/zarzysseus-docker.sh" "$@"
+}
+
+# Container repair copies are invoked with this flag. They must not inherit or
+# write the host user's selected mode from a bind-mounted HOME.
+if [[ "${ZARZYSSEUS_CONTAINER_MODE:-0}" != 1 ]]; then
+    case "${1:-}" in
+        mode)
+            case "${2:-status}" in
+                status) _zz_show_mode ;; native|docker) _zz_set_mode "$2" ;; *) echo 'Usage: mode [status|native|docker]' >&2; exit 2 ;; esac
+            exit $? ;;
+        mode-status) _zz_show_mode; exit $? ;;
+        profile)
+            case "${2:-status}" in
+                status) printf 'Native: '; _zz_read_profile native; printf 'Docker: '; _zz_read_profile docker ;;
+                cpu|full) _zz_set_profile "$(_zz_read_mode 2>/dev/null || echo native)" "$2" ;;
+                native|docker)
+                    case "${3:-status}" in status) _zz_read_profile "$2" ;; cpu|full) _zz_set_profile "$2" "$3" ;; *) echo 'Usage: profile [status|cpu|full|native cpu|docker full]' >&2; exit 2 ;; esac ;;
+                *) echo 'Usage: profile [status|cpu|full|native cpu|docker full]' >&2; exit 2 ;;
+            esac
+            exit $? ;;
+        profile-menu)
+            [[ -t 0 && -t 1 ]] || { echo 'profile-menu requires a terminal.' >&2; exit 2; }
+            _zz_choose_profile "${2:-native}"; exit $? ;;
+        docker-kit-sync) _zz_sync_kit "${2:-status}"; exit $? ;;
+        docker-path)
+            [[ $# == 2 && -d "$2" ]] || { echo 'Usage: docker-path /absolute/path/to/existing/kit' >&2; exit 2; }
+            _zz_valid_kit "$2" || { echo 'Directory must contain compose.yaml, run.sh and zarzysseus-docker.sh.' >&2; exit 2; }
+            _ZZ_NEW_DIR="$(cd -- "$2" && pwd -P)" || exit
+            _zz_write_config "$_ZZ_DOCKER_FILE" "$_ZZ_NEW_DIR"; printf 'Docker kit configured: %s\n' "$_ZZ_NEW_DIR"; exit $? ;;
+        docker) shift; _zz_dispatch_docker "${@:-tui}" ;;
+        native) shift; export ZARZYSSEUS_EXEC_MODE=native; if (( $# == 0 )); then set -- tui; fi ;;
+    esac
+    if [[ $# == 0 && -t 0 && -t 1 ]] || [[ "${1:-}" == tui ]]; then
+        _zz_effective="$(_zz_read_mode)" || { _zz_select_mode || exit $?; _zz_effective="$(_zz_read_mode)"; }
+    else
+        # Backward compatibility: direct scripts like `./zarzysseus.sh agent-doctor`
+        # stay native unless the user explicitly selected Docker mode.
+        _zz_effective="$(_zz_read_mode)" || _zz_effective=native
+    fi
+    if [[ "$_zz_effective" == docker ]]; then
+        if [[ $# == 0 ]]; then set -- tui; fi
+        _zz_dispatch_docker "$@"
+    fi
+    # Host-native TUI children must always remain native, even if the user
+    # changes the saved mode while this TUI is still running.
+    export ZARZYSSEUS_EXEC_MODE=native
+    export ZARZYSSEUS_PROFILE="$(_zz_read_profile native)" || exit 2
+    if [[ "$ZARZYSSEUS_PROFILE" == cpu ]]; then
+        # CPU-only is a policy on automatic installs, not a driver uninstaller.
+        export ACCELERATOR_PREFERENCE=cpu INSTALL_VLLM=0 INSTALL_SGLANG=0 INSTALL_MLX_LM=0
+        export NVIDIA_AUTO_DRIVER=0 ROCM_AUTO_DRIVER=0
+        case "${1:-}" in
+            accelerator-setup|vllm-install|sglang-install|mlx-install|gpu-install|install-sglang|install-vllm|install-mlx|vpull|spull|mpull|install-full|install-auto-fit)
+                echo 'CPU-only profile blocks explicit GPU/MLX runtime installs. Set profile native full to enable.' >&2
+                exit 2 ;;
+        esac
+    fi
+fi
+
+
 # ==========================================
 # Zarzysseus AI Installer / Service Manager
 # Multi-distro Linux (package-manager capability detection; distro derivatives supported)
@@ -11777,13 +12036,25 @@ function _zarDlSync(el, task, raw) {
 }
 '''
 
+
+def change_line(t, line, added, label):
+    # A complete line is a safer, version-tolerant anchor than a fixed count of
+    # leading spaces. Refuse ambiguous or absent matches; preserve indentation.
+    import re
+    matches = list(re.finditer(r'(?m)^([ \t]*)' + re.escape(line) + r'$', t))
+    if len(matches) != 1:
+        raise ValueError(f'{label}: upstream anchor count {len(matches)}, expected 1; no changes made')
+    match = matches[0]
+    indent = match.group(1)
+    return t[:match.start()] + indent + added + '\n' + indent + line + t[match.end():]
+
 def patch(t):
     if MARKER in t:raise ValueError('patch marker already present without verified manifest')
     t=change(t,'function _downloadBadgeText(progress) {',JS+'\nfunction _downloadBadgeText(progress) {','helper insertion')
     t=change(t,"      const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');",
         "      _zarDlSync(el, task, task.output || el.querySelector('.cookbook-output-pre')?.textContent || '');\n      const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');",'existing card update')
-    t=change(t,"     const _waveEl = el.querySelector('.cookbook-task-wave');",
-        "     _zarDlSync(el, task, task.output || '');\n     const _waveEl = el.querySelector('.cookbook-task-wave');",'new card update')
+    t=change_line(t,"const _waveEl = el.querySelector('.cookbook-task-wave');",
+        "_zarDlSync(el, task, task.output || '');",'new card update')
     t=change(t,"(_mobileCollapseDefault && !_shouldAutoExpandTaskOutput(task)) ? ' cookbook-task-collapsed' : ''",
         "(task.type === 'download' ? !_expandedTaskIds.has(task.sessionId) : (_mobileCollapseDefault && !_shouldAutoExpandTaskOutput(task))) ? ' cookbook-task-collapsed' : ''",'default download log collapse')
     t=change(t,"    const _streamExpanded = _wrapForStream && !_wrapForStream.classList.contains('cookbook-task-collapsed');",
@@ -14227,6 +14498,24 @@ tui_full_install() {
 # per second so the logo/menu do not flicker.  Timeout selects the complete
 # text + video + photo + audio profile.
 tui_full_install_mode_menu() {
+    if [[ "${ZARZYSSEUS_PROFILE:-full}" == cpu ]]; then
+        local choice
+        while true; do
+            if _tui_menu 'CPU-ONLY INSTALL / UPDATE' \
+                'INSTALL / UPDATE ODYSSEUS (CPU flags; no automatic GPU runtimes)' \
+                'LOW POWER SPEC / SMALL MODELS' \
+                'SEARCH / INSTALL SKILLS' \
+                'BACK'; then
+                choice="$TUI_CHOICE"
+                case "$choice" in
+                    0) _tui_run_command 'CPU-only Odysseus installation' install ;;
+                    1) tui_lps_mode_menu ;;
+                    2) tui_skills_menu ;;
+                    3) return 0 ;;
+                esac
+            else return 0; fi
+        done
+    fi
     local -a items mode_profiles=(
         'text-video-photo-audio'
         'text-video-photo'
@@ -14674,8 +14963,14 @@ tui_install_menu() {
                     ;;
                 2) _tui_run_command 'Updating operating system' system-update ;;
                 3) _tui_run_command 'Installing Zarzysseus tools' tools ;;
-                4) _tui_run_command 'Installing / repairing accelerator stack' accelerator-setup ;;
-                5) _tui_run_command 'Installing / verifying MLX-LM' mlx-install ;;
+                4)
+                    if [[ "${ZARZYSSEUS_PROFILE:-full}" == cpu ]]; then
+                        _tui_print_center 'CPU-only profile: switch to Full to install GPU runtime.'; _tui_pause
+                    else _tui_run_command 'Installing / repairing accelerator stack' accelerator-setup; fi ;;
+                5)
+                    if [[ "${ZARZYSSEUS_PROFILE:-full}" == cpu ]]; then
+                        _tui_print_center 'CPU-only profile: MLX is disabled.'; _tui_pause
+                    else _tui_run_command 'Installing / verifying MLX-LM' mlx-install; fi ;;
                 6)
                     _tui_end
                     _tui_size
@@ -16173,6 +16468,13 @@ tui_hf_menu() {
 
 tui_runtime_menu() {
     local choice
+    if [[ "${ZARZYSSEUS_PROFILE:-full}" == cpu ]]; then
+        while true; do
+            if _tui_menu 'CPU-ONLY MODEL RUNTIMES' 'OLLAMA  |  opull  |  PULL MODEL' 'BACK'; then
+                case "$TUI_CHOICE" in 0) tui_opull ;; 1) return 0 ;; esac
+            else return 0; fi
+        done
+    fi
     while true; do
         if _tui_menu 'MODEL RUNTIME DOWNLOADS' \
             'OLLAMA    |  opull  |  PULL MODEL' \
@@ -17077,6 +17379,7 @@ tui_diagnostics_menu() {
             'SET DEFAULT PROVIDER + MODEL' \
             'SHOW FULL COMMAND HELP' \
             'AGENT DIAGNOSTICS / REPAIR / ROLLBACK' \
+            'AMD RDNA3 GPU RUNTIME DOCTOR (ISOLATED DOCKER)' \
             'BACK'; then
             choice="$TUI_CHOICE"
             case "$choice" in
@@ -17094,7 +17397,8 @@ tui_diagnostics_menu() {
                 11) tui_model_default ;;
                 12) tui_help_screen ;;
                 13) tui_agent_menu ;;
-                14) return 0 ;;
+                14) _tui_run_command 'AMD RDNA3 isolated Docker doctor' docker gpu-doctor ;;
+                15) return 0 ;;
             esac
         else
             return 0
@@ -17151,6 +17455,8 @@ odysseus_tui() {
             'MCP / FREEMCP' \
             'DIAGNOSTICS / TOOLS / ADVANCED' \
             'NETWORK DISCOVERABILITY' \
+            'SWITCH TO DOCKER MODE' \
+            'HARDWARE PROFILE: CPU-ONLY / FULL' \
             'EXIT'; then
             choice="$TUI_CHOICE"
             case "$choice" in
@@ -17165,7 +17471,21 @@ odysseus_tui() {
                 8) tui_mcp_menu ;;
                 9) tui_diagnostics_menu ;;
                 10) tui_network_menu ;;
-                11) break ;;
+                11)
+                    _tui_cleanup
+                    trap - INT TERM
+                    env -u ZARZYSSEUS_EXEC_MODE bash "$LAUNCH_SCRIPT_PATH" mode docker || return 0
+                    exec env -u ZARZYSSEUS_EXEC_MODE bash "$LAUNCH_SCRIPT_PATH" tui
+                    ;;
+                12)
+                    _tui_cleanup
+                    trap - INT TERM
+                    if bash "$LAUNCH_SCRIPT_PATH" profile-menu native; then
+                        exec env -u ZARZYSSEUS_EXEC_MODE -u ZARZYSSEUS_HARDWARE_PROFILE bash "$LAUNCH_SCRIPT_PATH" native
+                    fi
+                    return 0
+                    ;;
+                13) break ;;
             esac
         else
             break
@@ -17256,8 +17576,8 @@ case "$ACTION" in
         case "${2:-}" in
             status) cookbook_fix_status ;;
             rollback-oneclick) cookbook_oneclick_v10_1 rollback ;;
-            progress) cookbook_progress_v10_2 install; bump_cookbook_frontend_cache || true ;;
-            rollback-progress) cookbook_progress_v10_2 rollback; bump_cookbook_frontend_cache || true ;;
+            progress) cookbook_progress_v10_2 install && bump_cookbook_frontend_cache ;;
+            rollback-progress) cookbook_progress_v10_2 rollback && bump_cookbook_frontend_cache ;;
             '') install_cookbook_reliability_fixes ;;
             *) echo 'Usage: cookbook-fix [status|progress|rollback-progress|rollback-oneclick]'; exit 2 ;;
         esac

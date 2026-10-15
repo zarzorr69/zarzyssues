@@ -1,0 +1,46 @@
+# V11.1 optional Full-profile RDNA3 inference; never started by CPU installation.
+# Uses the same project and volumes as the CPU kit, preserving the original stack.
+services:
+  rdna3-sglang:
+    image: ${RDNA3_IMAGE:-ghcr.io/amd-aim/sglang-radeon@sha256:e9c8365e6e0a7e63c1241aa9d0de8acd104d19ad785a45fc1b76215b541184d1}
+    profiles: [gpu]
+    restart: "no"
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add: [video]
+    shm_size: 8g
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:${RDNA3_PORT:-30000}:30000"
+    environment:
+      HIP_VISIBLE_DEVICES: ${RDNA3_GPU_INDEX:-0}
+      SGLANG_USE_AITER: "false"
+      HF_HOME: /models
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    volumes:
+      - rdna3-model-cache:/models
+    # No automatic download of model weights merely by changing profile.
+    command:
+      - sglang
+      - serve
+      - --model-path
+      - ${RDNA3_MODEL:-Qwen/Qwen2.5-0.5B-Instruct}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "30000"
+      - --dtype
+      - bfloat16
+      - --attention-backend
+      - triton
+      - --disable-cuda-graph
+      - --tp-size
+      - "1"
+      - --context-length
+      - "2048"
+      - --mem-fraction-static
+      - "0.35"
+    networks: [cpu-private]
+volumes:
+  rdna3-model-cache:
