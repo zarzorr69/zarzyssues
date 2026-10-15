@@ -244,6 +244,14 @@ _auth_setup() {
         return 2
     fi
 }
+_auth_help() {
+    echo 'Zarzysseus Docker account controls:'
+    echo '  First-time setup: Accounts / Login -> Create initial admin account.'
+    echo '  Existing account: log in to Odysseus and use its Account Settings to change your password.'
+    echo '  Security: this CLI never overwrites existing credentials, deletes auth.json, or prints passwords.'
+    echo '  Browser address is shown under Network Discoverability -> Show address.'
+    echo '  CLI: zarzysseus.sh docker auth-setup  (first-admin only)'
+}
 _install_step() { printf '\n========== STEP %s/6: %s ==========\n' "$1" "$2"; }
 docker_install() {
     echo 'ZARZYSSEUS DOCKER — GUIDED INSTALL'
@@ -469,6 +477,7 @@ dispatch() {
         profile) printf 'Docker hardware profile: %s\n' "$profile" ;;
         install|install-full|install-auto-fit) docker_install ;;
         toolkit-install) bridge install ;;
+        auth-help|account-help) _auth_help ;;
         status|docker-status) kit_state ;;
         network-status) _network_show ;;
         network-configure) _network_configure ;;
@@ -527,6 +536,7 @@ Navigation categories mirror the native edition; implementations run in Compose.
   network-configure       Guided binding change, backed-up .env, approval before recreate
   network-apply           Apply saved settings by recreating only Odysseus
   auth-setup              First-run admin account only, never resets existing users
+  auth-help               How to change an existing user's password safely
   down                    Stop Compose services, preserve named volumes
 Not supported in Docker: native OS updates, driver installers, host systemd,
 MLX (macOS), standalone GPU engine installation, unrestricted host file access.
@@ -798,13 +808,13 @@ menu() {
         'MLX-LM MANAGEMENT (native/macOS only)' 'HUGGING FACE / MODEL FILES'
         'SKILLS.SH / AGENT SKILLS' 'MCP / FREEMCP'
         'DIAGNOSTICS / TOOLS / ADVANCED' 'NETWORK DISCOVERABILITY'
-        'SWITCH TO NATIVE MODE' 'SWITCH CPU-ONLY / FULL PROFILE'
+        'SWITCH TO NATIVE MODE' 'SWITCH CPU-ONLY / FULL PROFILE' 'ACCOUNT / LOGIN'
     )
     while true; do
         _zd_choose "ZARZYSSEUS — DOCKER MODE — ${profile^^} PROFILE" "${menu_items[@]}" || return 0
         option="$ZD_SELECTION"
         case "$option" in
-            1) submenu 'INSTALL / UPDATE' 'Install Odysseus + CPU model (always available)|install' 'Install/refresh toolkit helper|toolkit-install' 'Check current status|status' ;;
+            1) submenu 'INSTALL / UPDATE' 'Install Odysseus + CPU model (always available)|install' 'Install/refresh toolkit helper|toolkit-install' 'Check current status|status' 'First-run admin account setup|auth-setup' 'Existing-account password help|auth-help' ;;
             2) submenu 'SERVICES' 'Start Odysseus|start' 'Stop services|stop' 'Restart Odysseus|restart' 'Show status|status' 'Show logs|logs' 'Stop containers, retain volumes|down' ;;
             3)
                 if [[ "$profile" == full ]]; then
@@ -827,6 +837,7 @@ menu() {
                     echo 'Open the unified launcher and run: ./zarzysseus.sh mode native'
                 fi
                 ;;
+            14) submenu 'ACCOUNT / LOGIN' 'First-run admin account setup|auth-setup' 'How to change an existing password|auth-help' 'View browser address|network-status' ;;
             13)
                 if [[ -n "${ZARZYSSEUS_MODE_SWITCH_CMD:-}" ]]; then
                     bash "$ZARZYSSEUS_MODE_SWITCH_CMD" profile-menu docker || :

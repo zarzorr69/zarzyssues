@@ -903,6 +903,22 @@ bash /DATA/zarzysseus-unified/zarzysseus.sh docker-kit-sync apply  # review firs
 
 Your `.env`, credentials, existing models, workspaces, and named Docker volumes stay in place. **A successful TUI/install simulation isn't proof that every model works on every CPU.** Verify services and Ollama models after applying a kit update.
 
+## V11.7 — ZimaOS Docker account menu and Modelfile mount recovery
+
+**Find account controls:** Docker mode now offers **14 ACCOUNT / LOGIN** in the main menu, plus **Install / Update → First-run admin account setup**. The existing **Network Discoverability → First-run admin account setup** path still works. For an existing admin, the safe path is to sign in to Odysseus and change the password in its authenticated account settings. The setup command cannot overwrite existing accounts.
+
+**Fix `Error: no Modelfile or safetensors files found` after a successful Ollama pull:** the Docker CPU model installer now checks that the host's `models/Modelfile.quality` is present and matches the file mounted inside the **running** `cpu-ollama` container. If the container has a stale/missing `/profiles` bind mount, you can explicitly approve `REMOUNT` to recreate only the Ollama container with the current Compose settings; named model volumes are kept. No model weights are downloaded before this check. The installer skips pulling a base model already installed in Ollama. It still verifies model creation separately; a successful download is not a guarantee that a particular profile is supported.
+
+For your ZimaOS installation, **preview and apply `docker-kit-sync`** before retrying, and keep your `.env` and named volumes. To diagnose without changing anything:
+
+```bash
+cd /DATA/zarzysseus-cpu-starter-kit/zarzysseus-cpu-kit
+ls -l models/Modelfile.quality
+sudo docker exec zarzysseus-cpu-cpu-ollama-1 ls -l /profiles/Modelfile.quality
+```
+
+If the host file exists but the container file is missing, try **Ollama Management → Install Qwen3.5 CPU quality profile** after syncing the release and approve the controlled remount. Existing model downloads remain stored in the `ollama-models` named volume. If the file is present on both sides but creation still fails, examine the Modelfile contents and Ollama compatibility rather than repeatedly pulling the base model.
+
 ## V11.6 — Download a model and use it in Chat (Ollama fast path)
 
 **For supported Ollama models, you no longer need to launch an individual SGLang or vLLM server.** Ollama runs as one background service and loads the selected model when you chat.
@@ -1787,6 +1803,13 @@ A model's final answer alone is not proof. In Agent Mode, explicitly request an 
 
 ## Changelog
 
+### V11.7 — Docker model mount recovery and discoverable account settings
+
+- The ZimaOS/Linux Docker CPU installer now checks that the container sees the **same Modelfile** as the host before any model pull or `ollama create` step. A stale/missing mount offers an explicitly approved `REMOUNT` of **only** the Ollama container; named model volumes are retained.
+- Reuses installed Ollama base models instead of downloading them again. No model or endpoint is claimed ready unless creation succeeds.
+- Added **Account / Login** at main-menu option 14 on Linux and Windows Docker. First-admin setup is also linked from Install / Update; existing accounts are preserved and directed to Odysseus's authenticated password settings.
+- Mocked mount-repair tests, existing Linux integration checks and Docker starter-kit tests pass. Live ZimaOS and Windows Docker still require verification.
+
 ### V11.6 — Cookbook Ollama auto-add
 
 - Successful **local Ollama** downloads are verified and reflected in Odysseus's model picker without per-model SGLang/vLLM startup.
@@ -1797,7 +1820,9 @@ A quick history of Zarzysseus releases. **Documentation update:** startup comman
 
 | Version | Highlights | Details |
 | :--- | :--- | :--- |
-| **V11.5** · Current | Read-only model visibility diagnostics, approval-based recovery of missing first-run admin helpers, and allowed-origin typo protection. | [Docker recovery guide](#docker-model-visibility-and-account-recovery-v115) |
+| **V11.7** · Current | Mounted-Modelfile verification, consent-based `cpu-ollama` recreation, download reuse and account navigation. | [V11.7 recovery guide](#v117--zimaos-docker-account-menu-and-modelfile-mount-recovery) |
+| **V11.6** | Ollama Cookbook auto-add and chat-picker refresh after verified download. | [V11.6 overview](#v116--download-a-model-and-use-it-in-chat-ollama-fast-path) |
+| **V11.5** | Read-only model visibility diagnostics, approval-based recovery of missing first-run admin helpers, and allowed-origin typo protection. | [Docker recovery guide](#docker-model-visibility-and-account-recovery-v115) |
 | **V11.4** | Detailed Docker installation, network binding, first-run account setup, and responsive Docker TUI. | [V11.4 Docker walkthrough](#v114--docker-install-network-and-first-run-account-setup) |
 | **V11.3** | Windows Docker controller, Native/Docker mode selection, and matched container-tool categories. | [Windows Docker guide](#docker-on-windows-powershell-curlexe-one-liner) |
 | **V11.2** | Fixed Docker install confirmation and added the full-screen Docker menu; Native/Full RDNA3 doctor. | [ZimaOS reliability details](#v112--zimaos-install-and-tui-reliability) |

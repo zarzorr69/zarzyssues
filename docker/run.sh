@@ -32,6 +32,41 @@ esac
 budget=1024
 [[ "$profile" == quality ]] && budget=256
 
+# The active container may predate a kit-sync or a Compose bind-mount change.
+# Verify what is ACTUALLY visible inside Ollama before downloading model weights.
+# Recreating only the Ollama container is consent-gated and preserves named volumes.
+ensure_profile_mount() {
+  local selected="$1" host_file="./models/Modelfile.$1" container_file="/profiles/Modelfile.$1" answer=""
+  if [[ ! -s "$host_file" || -L "$host_file" ]]; then
+    printf '[ERROR] Missing/empty or unsafe host profile: %s\n' "$PWD/$host_file" >&2
+    echo 'Synchronize the existing Docker kit with the release first (docker-kit-sync preview, then apply).' >&2
+    return 2
+  fi
+  if ! grep -q '^FROM ' "$host_file"; then
+    printf '[ERROR] Invalid profile, no FROM instruction: %s\n' "$host_file" >&2
+    return 2
+  fi
+  if dc exec -T cpu-ollama cat "$container_file" 2>/dev/null | cmp -s "$host_file" -; then
+    echo "[OK] Active Ollama container sees $container_file (matches kit)."
+    return 0
+  fi
+  printf '[MOUNT MISMATCH] Active Ollama cannot see the expected Modelfile: %s\n' "$container_file" >&2
+  printf 'Host profile is available at %s\n' "$PWD/$host_file" >&2
+  echo 'This often happens when a container predates updated Compose mounts. Model volumes will be preserved.' >&2
+  if [[ "${ZARZYSSEUS_CONFIRM:-}" != REMOUNT ]]; then
+    [[ -t 0 ]] || { echo 'Run interactively to approve a temporary Ollama restart. No model download was attempted.' >&2; return 2; }
+    read -r -p 'Type REMOUNT to recreate ONLY cpu-ollama with its current Compose mounts: ' answer || return 2
+    [[ "$answer" == REMOUNT ]] || { echo 'Cancelled; no container was recreated.'; return 2; }
+  fi
+  dc up -d --no-deps --force-recreate cpu-ollama || return 2
+  start_model_server
+  if ! dc exec -T cpu-ollama cat "$container_file" 2>/dev/null | cmp -s "$host_file" -; then
+    echo '[ERROR] Modelfile still unavailable or different after recreation. Check kit source and the Compose models:/profiles volume.' >&2
+    return 2
+  fi
+  echo "[OK] Repaired /profiles mount for $selected. Existing model volumes preserved."
+}
+
 start_model_server() {
   dc up -d "$@" cpu-ollama
   local attempt
@@ -47,8 +82,14 @@ start_model_server() {
 case "${1:-help}" in
   setup)
     start_model_server
-    printf 'Downloading %s; Ollama will show live progress.\n' "$base"
-    dc exec -T cpu-ollama ollama pull "$base"
+    ensure_profile_mount "$profile" || exit 2
+    if dc exec -T cpu-ollama ollama show "$base" >/dev/null 2>&1; then
+      printf '[OK] Base model %s already installed; skipping repeat download.\n' "$base"
+    else
+      printf 'Downloading %s; Ollama will show live progress.\n' "$base"
+      dc exec -T cpu-ollama ollama pull "$base"
+    fi
+    printf '[CREATE] Registering CPU profile %s using /profiles/Modelfile.%s\n' "$model" "$profile"
     dc exec -T cpu-ollama ollama create "$model" -f "/profiles/Modelfile.$profile"
     dc run --rm bench "$model" --threads 2 --tool-only --tool-predict "$budget"
     printf '\nProfile created: %s. Run the benchmark before choosing it for everyday use.\n' "$model"
@@ -63,7 +104,8 @@ case "${1:-help}" in
     printf '\nModel loaded. The keep-alive interval is shown above; MODEL_KEEP_ALIVE defaults to 30m.\n'
     ;;
   repair-agent)
-    dc exec -T cpu-ollama ollama list >/dev/null
+    start_model_server --pull never --no-deps
+    ensure_profile_mount agent || exit 2
     dc exec -T cpu-ollama ollama create lfm2.5-zarzysseus-cpu:2.6b -f /profiles/Modelfile.agent
     dc run --pull never --no-deps --rm bench lfm2.5-zarzysseus-cpu:2.6b --threads 2 --tool-only
     ;;

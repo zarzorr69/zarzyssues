@@ -472,3 +472,7 @@ Existing `auth.json` is never overwritten. If an account exists, log in and
 change credentials through Odysseus's authenticated account settings. To
 update the host bind address, use the Docker Network menu and approve
 recreation of **only** Odysseus; never enable unauthenticated public access.
+
+## V11.7 Modelfile mount recovery / account menu
+
+The Docker installer now validates the active Ollama container `/profiles` mount before any model pull. A stale/missing mount can be repaired with explicit `REMOUNT` approval (recreates only `cpu-ollama`, preserving model volumes). Installed base models are reused instead of repulled. Find **ACCOUNT / LOGIN** at Docker menu entry 14; first-run admin setup is also under **Install / Update**. Existing accounts are never overwritten; change credentials from the authenticated Odysseus UI.

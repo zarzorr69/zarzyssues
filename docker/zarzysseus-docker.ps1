@@ -84,6 +84,25 @@ function Start-Ollama {
     }
     throw 'Ollama did not become ready in 60 seconds. Inspect Docker logs.'
 }
+function Confirm-OllamaProfileMount([string]$Profile) {
+    $hostFile=Join-Path $KitDir "models/Modelfile.$Profile"
+    Require (Test-Path -LiteralPath $hostFile -PathType Leaf) "Missing host Modelfile: $hostFile. Restore the complete Docker kit first."
+    $expected=(Get-Content -LiteralPath $hostFile -Raw).Trim().Replace("`r`n", "`n")
+    Require ($expected -match '(?m)^FROM ') "Host Modelfile has no FROM instruction: $hostFile"
+    $inside="/profiles/Modelfile.$Profile"
+    $actual=(& docker compose --env-file .env -f compose.yaml exec -T cpu-ollama cat $inside 2>$null) -join "`n"
+    if(($LASTEXITCODE -eq 0) -and ($actual.Trim().Replace("`r`n", "`n") -ceq $expected)) {
+        Explain "[OK] Ollama sees $inside."
+        return
+    }
+    Warn "Ollama cannot see the matching $inside. The running container may have an old /profiles mount."
+    Require (Confirm 'REMOUNT' 'Recreate ONLY cpu-ollama with current Compose mounts? This briefly interrupts Ollama and preserves model volumes.') 'Cancelled; model was not downloaded.'
+    Invoke-Compose @('up','-d','--no-deps','--force-recreate','cpu-ollama')
+    Start-Ollama
+    $actual=(& docker compose --env-file .env -f compose.yaml exec -T cpu-ollama cat $inside 2>$null) -join "`n"
+    Require (($LASTEXITCODE -eq 0) -and ($actual.Trim().Replace("`r`n", "`n") -ceq $expected)) 'Modelfile is still missing/different after recreation. Inspect Compose models:/profiles and kit files.'
+    Explain '[OK] Ollama Modelfile mount repaired without clearing the model volume.'
+}
 function Setup-Model([string]$Profile) {
     $profiles=@{
         quality=@('qwen3.5:4b-q4_K_M','qwen3.5-zarzysseus-cpu:4b')
@@ -94,7 +113,10 @@ function Setup-Model([string]$Profile) {
     $details=$profiles[$Profile]
     Require (Confirm 'PULL' "Download Ollama model $($details[0]) and create its CPU profile? This may download several GB.") 'Model setup cancelled.'
     Start-Ollama
-    Invoke-Compose @('exec','-T','cpu-ollama','ollama','pull',$details[0])
+    Confirm-OllamaProfileMount $Profile
+    & docker compose --env-file .env -f compose.yaml exec -T cpu-ollama ollama show $details[0] *> $null
+    if($LASTEXITCODE -eq 0) { Explain "[OK] Base model $($details[0]) is already present; no repeat download." }
+    else { Invoke-Compose @('exec','-T','cpu-ollama','ollama','pull',$details[0]) }
     Invoke-Compose @('exec','-T','cpu-ollama','ollama','create',$details[1],'-f',"/profiles/Modelfile.$Profile")
     Explain "Installed $($details[1]). This does not switch your active chat model."
 }
@@ -344,6 +366,7 @@ function Dispatch([string]$What,[string]$Arg='',[string]$ExtraArg='') {
         'network-configure' { Set-Network; break }
         'network-apply' { Apply-Network; break }
         'auth-setup' { Setup-Admin; break }
+        'auth-help' { Explain 'First-time setup: Accounts / Login -> Create initial admin. Existing login: sign in to Odysseus and change the password in Account Settings. Zarzysseus never replaces an existing admin account.'; break }
         'logs' { Invoke-Compose @('--profile','app','logs','--tail','120','odysseus'); break }
         'down' { Require (Confirm 'DOWN' 'Stop and remove Compose containers? Named volumes and data will remain.') 'Cancelled.'; Invoke-Compose @('--profile','app','down'); break }
         'ollama-start' { Start-Ollama; break }
@@ -391,7 +414,7 @@ function Show-Submenu([string]$Heading,[object[]]$Options) {
 }
 function Show-Menu {
     $categories=@(
-        @{Title='INSTALL / UPDATE';Options=@((New-MenuEntry 'Check Docker Desktop readiness' 'docker-prereq'),(New-MenuEntry 'Install Docker Desktop (approval)' 'docker-desktop-install'),(New-MenuEntry 'Install CPU Docker stack' 'install'),(New-MenuEntry 'Install toolkit helper' 'toolkit-install'),(New-MenuEntry 'Status' 'status'))},
+        @{Title='INSTALL / UPDATE';Options=@((New-MenuEntry 'Check Docker Desktop readiness' 'docker-prereq'),(New-MenuEntry 'Install Docker Desktop (approval)' 'docker-desktop-install'),(New-MenuEntry 'Install CPU Docker stack' 'install'),(New-MenuEntry 'Install toolkit helper' 'toolkit-install'),(New-MenuEntry 'Status' 'status'),(New-MenuEntry 'First-run admin account setup' 'auth-setup'),(New-MenuEntry 'Existing password help' 'auth-help'))},
         @{Title='SERVICE MANAGEMENT';Options=@((New-MenuEntry 'Start Odysseus' 'start'),(New-MenuEntry 'Stop services' 'stop'),(New-MenuEntry 'Restart app' 'restart'),(New-MenuEntry 'Status' 'status'),(New-MenuEntry 'Logs' 'logs'),(New-MenuEntry 'Shut down Compose services' 'down'))},
         @{Title='MODEL RUNTIMES';Options=@((New-MenuEntry 'Ollama status' 'status'),(New-MenuEntry 'AMD RDNA3 GPU compatibility note' 'gpu-status'))},
         @{Title='MODEL MANAGER / HARDWARE FIT';Options=@((New-MenuEntry 'Diagnose model visibility' 'model-doctor'),(New-MenuEntry 'Installed models' 'models'),(New-MenuEntry 'Model advisor' 'model-advisor'))},
@@ -401,13 +424,15 @@ function Show-Menu {
         @{Title='SKILLS.SH / AGENT SKILLS';Options=@((New-MenuEntry 'Installed skills' 'skills-list'),(New-MenuEntry 'Skills health' 'skills-doctor'),(New-MenuEntry 'Approve skill setup' 'skills-setup'),(New-MenuEntry 'Skill model advisor' 'model-advisor'))},
         @{Title='MCP / FREEMCP';Options=@((New-MenuEntry 'MCP health' 'mcp-health'),(New-MenuEntry 'MCP setup' 'mcp-setup'))},
         @{Title='DIAGNOSTICS / TOOLS / ADVANCED';Options=@((New-MenuEntry 'Doctor' 'doctor'),(New-MenuEntry 'Agent repair (guarded)' 'repair'),(New-MenuEntry 'Cookbook status' 'cookbook-fix' 'status'),(New-MenuEntry 'Agent rollback' 'agent-rollback'))},
-        @{Title='NETWORK DISCOVERABILITY';Options=@((New-MenuEntry 'Show binding / port / origins' 'network-status'),(New-MenuEntry 'Change local / LAN / Tailscale binding' 'network-configure'),(New-MenuEntry 'Apply saved binding (recreate app)' 'network-apply'),(New-MenuEntry 'First-run admin account setup' 'auth-setup'))}
+        @{Title='NETWORK DISCOVERABILITY';Options=@((New-MenuEntry 'Show binding / port / origins' 'network-status'),(New-MenuEntry 'Change local / LAN / Tailscale binding' 'network-configure'),(New-MenuEntry 'Apply saved binding (recreate app)' 'network-apply'),(New-MenuEntry 'First-run admin account setup' 'auth-setup'))},
+        @{Title='ACCOUNT / LOGIN';Options=@((New-MenuEntry 'Create first administrator (only on new installs)' 'auth-setup'),(New-MenuEntry 'How to change existing credentials' 'auth-help'),(New-MenuEntry 'Show browser address' 'network-status'))}
     )
     while($true) {
         Write-Host "`n=========== ZARZYSSEUS / WINDOWS DOCKER $((Get-Profile).ToUpperInvariant()) ===========" -ForegroundColor Cyan
         for($i=0;$i -lt $categories.Count;$i++){ Write-Host ('{0,2} {1}' -f ($i+1), $categories[$i].Title) }
         Write-Host '12 Switch to Native Windows'
         Write-Host '13 Switch CPU-only / Full'
+        Write-Host '14 Account / Login'
         Write-Host '0 Exit'
         $pick=Read-Host 'Choose'
         if($pick -eq '0') { return }
@@ -416,6 +441,7 @@ function Show-Menu {
             Write-Host 'Native mode saved. Reopen the launcher to enter Native mode.'
             return
         }
+        if($pick -eq '14') { Show-Submenu 'ACCOUNT / LOGIN' $categories[11].Options; continue }
         if($pick -eq '13') {
             $next=if((Get-Profile) -eq 'cpu'){'full'}else{'cpu'}
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $MainScript profile docker $next
