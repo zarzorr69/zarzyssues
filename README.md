@@ -8,6 +8,8 @@
 
 Zarzysseus is a companion tool, **not** an alternative copy of Odysseus. You choose when to install services, download models, or approve third-party tools.
 
+> **V11.4 — Guided Docker install and network controls:** Docker mode now offers a detailed six-stage installer, optional initial CPU model download, readiness checks, a first-run admin account step, and interactive listener/origin settings. Existing accounts are never reset. Linux Docker gains the same responsive artwork/centered menu style as Native (with a plain numbered fallback). Windows Docker offers equivalent guided install, login setup and network controls. [Follow the Docker management walkthrough](#v114--docker-install-network-and-first-run-account-setup).
+
 > **V11.3 cross-platform update:** Windows can now manage the same containerized CPU stack and container-side agent, skills, MCP, model and Cookbook tools from a native PowerShell menu. Linux Docker and ZimaOS retain their dedicated curl quick starts; the Windows Docker quick start downloads the full release. Native host-only actions are not silently passed into Docker.
 
 > **V11.2 ZimaOS update:** Docker's Install/Update confirmation no longer crashes when it is called with one argument. Docker mode now offers a full-screen arrow-key menu in compatible SSH terminals, with a numbered fallback. The Native/Full AMD RDNA3 doctor uses the isolated Docker runtime without changing your Docker hardware profile. [Read the details](#v112--zimaos-install-and-tui-reliability).
@@ -87,6 +89,75 @@ bash /DATA/zarzysseus-unified/zarzysseus.sh docker-kit-sync apply   # Back up ch
 The preview does not modify the kit. Applying sync can replace kit **source files**, so review customized Compose settings first; it preserves `.env`, model volumes, workspaces, and application data. After sync, use **Docker → Service Management → Status** to inspect the existing containers before deciding whether anything needs restarting.
 
 > **Safety:** All quick starts use the repository's current `main` branch. [Review the source](https://github.com/zarzorr69/zarzyssues) if you prefer before executing it. Docker tools may need permission to access the daemon, but **do not run the entire Zarzysseus TUI with `sudo`**. Termux can be used as an SSH client for ZimaOS, not as a supported Docker host for this project.
+
+## V11.4 — Docker install, network and first-run account setup
+
+### Guided install: choose the TUI, not individual shell commands
+
+On **Linux Docker / ZimaOS**, launch Zarzysseus, select **Docker** and the **CPU-only** profile (recommended for 4th-gen i7 servers), then navigate:
+
+```text
+ZARZYSSEUS  →  DOCKER MODE
+  ├─ INSTALL / UPDATE
+  │    └─ Install Odysseus + CPU model
+  │         1. Verify Docker Engine and Compose
+  │         2. Show current network, containers and preserved data
+  │         3. Ask whether to download Qwen3.5 4B (optional)
+  │         4. Offer first-run admin account creation (before web startup)
+  │         5. Start Odysseus, ChromaDB and SearXNG
+  │         6. Install toolkit bridge and verify services
+  └─ NETWORK DISCOVERABILITY
+       ├─ Show binding, port, and browser origins
+       ├─ Change localhost / LAN / Tailscale binding
+       ├─ Apply saved network changes (recreate Odysseus only)
+       └─ First-run admin account setup
+```
+
+The installer prints **actual container and model download output**, not a fake percent-complete bar. Each stage makes it clear what succeeded and what still needs attention. You can skip the large starter model on a slow CPU and download it later in **Ollama Management**. Starting services does not remove Docker named volumes, existing users, or your `.env` file.
+
+**On Windows Docker Desktop**, navigate through the same named categories and use **Install Docker stack** and **Network Discoverability**. The Windows installer is a native PowerShell application that manages Linux containers; it does not need Git Bash. The six-stage install includes a consent-based optional model download and the same account-readiness safeguard.
+
+### Change the web address without editing `.env`
+
+For ZimaOS and other Linux Docker hosts, open **Network Discoverability → Change LAN / Tailscale / localhost binding**, then:
+
+1. Choose **localhost only**, a **specific LAN/Tailscale IPv4 address**, or **all interfaces** (`0.0.0.0`).
+2. Choose the host port (default `7012`) and provide your real browser origin (such as `http://192.168.1.156:7012`, or the HTTPS reverse-proxy address). Never type `0.0.0.0` in your browser.
+3. Review the preview and enter `NETWORK` to approve. Zarzysseus saves a private backup of `.env` and updates only the three network settings together.
+4. To take effect, approve the **recreate Odysseus** prompt, or apply it later from the menu. This briefly interrupts the app. Docker's internal app port stays `7000`; ChromaDB, Ollama and other services are not exposed.
+
+**ZimaOS permissions:** An older install performed with `sudo` may have a root-owned `.env`. The menu can ask permission to change ownership of **that one file only** (never the whole `/DATA` tree); decline to leave it unchanged.
+
+On **Windows Docker**, use **Network Discoverability → Change local / LAN / Tailscale binding**. It offers the same three choices, preview, backup and optional recreation. **Windows-specific reminder:** Docker Desktop may need firewall rules or trusted network configuration before another device can connect.
+
+**Security:** Binding to `0.0.0.0` or a LAN address makes Odysseus reachable beyond localhost. Keep authentication enabled. Prefer Tailscale/private VPN or a trusted HTTPS reverse proxy; avoid exposing port `7012` to the public internet. Do not alter host firewall rules unless you explicitly intend to permit access.
+
+### First-run username and password
+
+Toward the end of a **fresh** Docker install, before Odysseus first starts, Zarzysseus checks the persistent auth volume and offers to set the first admin username and **password entered without echo**. A disposable container calls Odysseus's own `AuthManager` to create the account. Credentials are passed on standard input, not placed in shell history, Docker environment variables or `.env`. This runs before the application starts so Odysseus does not generate a temporary password first.
+
+**Important:** Upstream Odysseus can create a temporary admin account automatically when the container starts. If that happened—or you already have a ZimaOS Odysseus account—Zarzysseus **will not overwrite the account**. Log in using your existing credentials and change your password in Odysseus's authenticated account settings. On a fresh auto-seeded Docker install, check the Odysseus startup log for the original temporary credentials. Do not delete `auth.json` to reset an existing installation.
+
+A reachable, running Docker container does not prove model inference or agent tool-calling works. Finish with **Service Management → Status** and **Diagnostics → Doctor**, then test a real Agent request.
+
+**Optional CLI shortcuts (Linux Docker):**
+
+```bash
+bash ./zarzysseus.sh docker network-status
+bash ./zarzysseus.sh docker network-configure
+bash ./zarzysseus.sh docker network-apply
+bash ./zarzysseus.sh docker auth-setup
+```
+
+**Optional CLI shortcuts (Windows Docker):**
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 docker network-status
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 docker network-configure
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 docker auth-setup
+```
+
+The Linux/Windows Docker menus share feature categories, but native host driver installation and unsupported runtimes are still host-only.
 
 ### Docker on Windows: PowerShell curl.exe one-liner
 
@@ -1688,7 +1759,9 @@ A quick history of Zarzysseus releases. **Documentation update:** the README now
 
 | Version | Highlights | Details |
 | :--- | :--- | :--- |
-| **V11.1** · Current | Independent **Native/Docker** deployment and **CPU-only/Full** hardware profiles on Linux; optional Docker RDNA3 inference controls with DNS, health, and generation checks. | [Deployment and hardware profiles](#v111--two-independent-switches-deployment--hardware) |
+| **V11.4** · Current | Detailed Docker installation, interactive network binding, guarded first-run account setup and native-style responsive Docker TUI. | [V11.4 Docker walkthrough](#v114--docker-install-network-and-first-run-account-setup) |
+| **V11.3** | Windows Docker controller and Native/Docker mode selection. | [V11.4 Windows instructions](#v114--docker-install-network-and-first-run-account-setup) |
+| **V11.1** | Independent **Native/Docker** deployment and **CPU-only/Full** hardware profiles on Linux; optional Docker RDNA3 inference controls with DNS, health, and generation checks. | [Deployment and hardware profiles](#v111--two-independent-switches-deployment--hardware) |
 | **V11** | Unified Linux mode selector and separate native/container menus; bundled ZimaOS CPU stack; preview-and-approve kit synchronization with backups. | [Unified launcher](#v11-one-launcher-native-and-docker-modes) |
 | **V10.2.1** | More robust, source-guarded Cookbook progress repair for changed upstream JavaScript formatting. | [Progress compatibility hotfix](#v1021--cookbook-progress-compatibility-hotfix) |
 | **V10.2** | Cleaner Cookbook progress indicator, continuing status polling, and collapsible download logs. | [Live progress](#cookbook-clean-live-download-progress-v102) |

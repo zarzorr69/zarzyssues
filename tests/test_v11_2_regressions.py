@@ -72,9 +72,13 @@ class DockerMenuRegression(unittest.TestCase):
         try:
             out = _read_until(master, b"Type INSTALL")
             os.write(master, b"INSTALL\n")
+            _read_until(master, b"Download/prepare this model now?")
+            os.write(master, b"y\n")
+            _read_until(master, b"Set the first admin username/password now?")
+            os.write(master, b"n\n")
+            out += _read_until(master, b"--- INSTALL SUMMARY ---", seconds=6)
             self.assertEqual(process.wait(timeout=5), 0)
-            out += _read_until(master, b"Container installed.", seconds=2)
-            self.assertIn(b"SIMULATED_SETUP:setup quality", out)
+            self.assertIn(b"STEP 6/6", out)
             self.assertNotIn(b"unbound variable", out)
         finally:
             if process.poll() is None:

@@ -268,7 +268,7 @@ native services. The optional Docker menu installs your toolkit separately and
 applies only the repair actions you select; see the integration section above.
 
 First copy `.env.example` to `.env` if `setup` has not already created it.
-For access from another device, edit these values in `.env`:
+For access from another device, **prefer the Docker TUI → Network Discoverability → Change binding** (it backs up `.env` and asks before restarting Odysseus). You can also edit these values manually:
 
 ```dotenv
 APP_BIND=YOUR_SERVER_LAN_OR_TAILSCALE_IP
@@ -458,3 +458,17 @@ The hardware `Full` profile never silently enables unsupported GPU engines.
 Windows end-to-end testing is pending; use Docker mode on Linux/ZimaOS for
 an already tested CLI deployment and consult the main README for the
 one-line Windows `curl.exe` bootstrap.
+
+
+### Guided setup and initial admin (V11.4)
+
+Use **Docker → Install / Update → Install Odysseus + CPU model**. The six-stage
+installer shows real Compose logs and model downloads. Before the application
+first starts, it can create an admin username and hidden password through the
+upstream `AuthManager` using a short-lived Compose container. No plaintext
+credentials are written to `.env` or passed as Docker environment variables.
+
+Existing `auth.json` is never overwritten. If an account exists, log in and
+change credentials through Odysseus's authenticated account settings. To
+update the host bind address, use the Docker Network menu and approve
+recreation of **only** Odysseus; never enable unauthenticated public access.

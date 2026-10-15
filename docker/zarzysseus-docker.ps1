@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 Zarzysseus Docker Desktop controller (Windows, Linux containers only).
 Uses the same Compose CPU kit and in-container agent/skills/MCP bridge as Linux.
@@ -114,11 +114,166 @@ function Start-App {
     Invoke-Compose @('--profile','app','up','-d','odysseus')
     Explain 'Odysseus containers requested. Check status and logs; startup is not proof of health.'
 }
+function Get-Setting([string]$Key,[string]$Default='') {
+    $envFile=Join-Path $KitDir '.env'
+    $found=$Default
+    foreach($line in (Get-Content -LiteralPath $envFile -ErrorAction Stop)) {
+        if($line.StartsWith("$Key=")) { $found=$line.Substring($Key.Length+1) }
+    }
+    return $found
+}
+function Show-Network {
+    Explain 'Current Docker web address (read only):'
+    Write-Host "  Host binding: $(Get-Setting 'APP_BIND' '127.0.0.1')"
+    Write-Host "  Host port:    $(Get-Setting 'APP_PORT' '7012')"
+    Write-Host "  Web origins:  $(Get-Setting 'APP_ORIGIN' 'http://localhost:7012')"
+    Write-Host 'Authentication remains enabled; internal container port is 7000.'
+}
+function Update-NetworkSettings([string]$Bind,[string]$Port,[string]$Origins) {
+    # Do not interpret .env as PowerShell. Preserve all non-network entries.
+    $envFile=Join-Path $KitDir '.env'
+    $info=Get-Item -LiteralPath $envFile -Force
+    Require (-not [bool]($info.Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Refusing symlinked .env.'
+    Require ($Origins -notmatch '[\r\n\s]') 'Invalid origins.'
+    $newValues=@{APP_BIND=$Bind;APP_PORT=$Port;APP_ORIGIN=$Origins}
+    $existing=@(Get-Content -LiteralPath $envFile -ErrorAction Stop)
+    $seen=@{}
+    $lines=New-Object 'System.Collections.Generic.List[string]'
+    foreach($line in $existing) {
+        if($line -match '^(APP_BIND|APP_PORT|APP_ORIGIN)=') {
+            $key=$Matches[1]
+            if(-not $seen.ContainsKey($key)) { $lines.Add("$key=$($newValues[$key])");$seen[$key]=$true }
+        } else { $lines.Add($line) }
+    }
+    foreach($key in @('APP_BIND','APP_PORT','APP_ORIGIN')) { if(-not $seen.ContainsKey($key)) { $lines.Add("$key=$($newValues[$key])") } }
+    $stamp=Get-Date -Format 'yyyyMMdd-HHmmss'
+    $backup="$envFile.zarzysseus-backup.$stamp.$PID"
+    Copy-Item -LiteralPath $envFile -Destination $backup -ErrorAction Stop
+    $temp=Join-Path $KitDir ('.env.zarzysseus.'+[guid]::NewGuid().ToString('N'))
+    try {
+        [IO.File]::WriteAllLines($temp,$lines.ToArray(),[Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temp -Destination $envFile -Force -ErrorAction Stop
+    } finally { if(Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+    Explain "Updated network settings. Backup: $backup"
+}
+function Set-Network {
+    Show-Network
+    Write-Host "`n1. Only this PC (127.0.0.1)"
+    Write-Host '2. LAN / Tailscale IPv4 address'
+    Write-Host '3. All interfaces (0.0.0.0) — requires a private network or proxy'
+    Write-Host '0. Cancel'
+    $choice=Read-Host 'Choose a binding'
+    switch($choice) {
+        '0' { return }
+        '1' {$bind='127.0.0.1'}
+        '2' {
+            $bind=Read-Host 'Local interface IPv4 address'
+            $parsed=$null
+            Require ([Net.IPAddress]::TryParse($bind,[ref]$parsed) -and $parsed.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) 'Enter a valid IPv4 address.'
+            Require ($bind -notin @('0.0.0.0','127.0.0.1')) 'Choose a non-loopback address.'
+        }
+        '3' { $bind='0.0.0.0' }
+        default { throw 'Invalid selection.' }
+    }
+    $defaultPort=Get-Setting 'APP_PORT' '7012'
+    $port=Read-Host "Host port [$defaultPort]"
+    if(-not $port) {$port=$defaultPort}
+    $num=0
+    Require ([int]::TryParse($port,[ref]$num) -and $num -ge 1024 -and $num -le 65535) 'Port must be between 1024 and 65535.'
+    if($bind -eq '127.0.0.1') { $origins="http://localhost:$port,http://127.0.0.1:$port" }
+    else {
+        $defaultOrigin=if($bind -eq '0.0.0.0'){''}else{"http://$bind`:$port"}
+        $origins=Read-Host "Browser URL origin (no path) [$defaultOrigin]"
+        if(-not $origins){$origins=$defaultOrigin}
+        Require ($origins -match '^https?://[A-Za-z0-9._:-]+(,https?://[A-Za-z0-9._:-]+)*$' -and $origins -notmatch '://0\.0\.0\.0:') 'Enter a browser-reachable http(s)://host:port origin (not 0.0.0.0).'
+        Warn 'LAN/all-interface exposure can make Odysseus accessible to other devices. Prefer VPN, HTTPS and a trusted proxy.'
+    }
+    Explain "New listener: $bind`:$port; allowed origins: $origins"
+    Require (Confirm 'NETWORK' 'Save this binding? Existing users and data will not be changed.') 'Cancelled.'
+    Update-NetworkSettings $bind $port $origins
+    if(Confirm 'RECREATE' 'Recreate only Odysseus now to apply the new network binding? It will briefly disconnect.') {
+        Invoke-Compose @('--profile','app','up','-d','--no-deps','--force-recreate','odysseus')
+    } else { Explain 'Saved. Apply it later from Network → Apply saved binding.' }
+}
+function Apply-Network {
+    Require (Confirm 'RECREATE' 'Recreate only Odysseus with the saved network settings?') 'Cancelled.'
+    Invoke-Compose @('--profile','app','up','-d','--no-deps','--force-recreate','odysseus')
+}
+function Get-AdminProvisionStatus {
+    $response=@(& docker compose --env-file .env -f compose.yaml run --rm --no-deps -T --entrypoint python odysseus /cpu-kit/admin_preseed.py status)
+    Require ($LASTEXITCODE -eq 0) 'Unable to inspect first-run account; please check Docker logs.'
+    if($response -match 'EXISTING_AUTH_PRESERVED') { return 'exists' }
+    if($response -match 'FIRST_RUN_AVAILABLE') { return 'available' }
+    throw 'Unexpected account status; refusing changes.'
+}
+function Setup-Admin {
+    $state=Get-AdminProvisionStatus
+    if($state -eq 'exists') {
+        Explain 'An admin account already exists. Its credentials will not be replaced. Log in and use Account Settings for a password change.'
+        return
+    }
+    Explain 'Create the FIRST admin account before Odysseus starts; password input is hidden.'
+    $name=Read-Host 'Admin username [admin]'
+    if(-not $name){$name='admin'}
+    Require ($name -cmatch '^[A-Za-z0-9._-]{1,32}$') 'Username must contain letters/digits/._- (maximum 32).'
+    $secret=Read-Host -AsSecureString 'Password (12 or more characters)'
+    $second=Read-Host -AsSecureString 'Confirm password'
+    $ptr=[IntPtr]::Zero; $ptr2=[IntPtr]::Zero; $plain=$null; $repeat=$null
+    try {
+        $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+        $ptr2=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($second)
+        $plain=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+        $repeat=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr2)
+        Require ($plain.Length -ge 12 -and $plain -ceq $repeat) 'Passwords differ or are shorter than 12 characters.'
+        Require ($plain -notmatch '[\r\n]') 'Newlines are not supported in passwords.'
+        $user=Get-AppIdentity
+        $parts=$user.Split(':')
+        # The password goes only via stdin to an ephemeral container; nothing
+        # secret appears in shell history, Compose .env, or Docker inspect env.
+        $payload=@("$name","$plain") -join "`n"
+        $response=$payload | & docker compose --env-file .env -f compose.yaml run --rm --no-deps -T --entrypoint python odysseus /cpu-kit/admin_preseed.py $parts[0] $parts[1]
+        Require ($LASTEXITCODE -eq 0) 'Admin provisioning failed. Your prior accounts were not intentionally changed.'
+        Require ($response -match 'ADMIN_CREATED|EXISTING_AUTH_PRESERVED') 'Unexpected admin provisioning response.'
+        if($response -match 'ADMIN_CREATED'){ Explain "First admin account created: $name" }
+        else { Explain 'Admin account already exists; no changes made.' }
+    } finally {
+        $plain=$null; $repeat=$null; $payload=$null
+        if($ptr -ne [IntPtr]::Zero){[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)}
+        if($ptr2 -ne [IntPtr]::Zero){[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr2)}
+    }
+}
+function Show-InstallStep([int]$Number,[string]$Description) { Write-Host "`n[$Number/6] $Description" -ForegroundColor Cyan }
 function Install-Stack {
-    Require (Confirm 'INSTALL' 'Install the CPU Docker stack (Ollama, Odysseus, ChromaDB, SearXNG)? Existing named volumes and .env will be retained.') 'Installation cancelled.'
+    Explain 'ZARZYSSEUS DOCKER — GUIDED INSTALL'
+    Explain 'Shows every pull, service action, and readiness check. Existing named volumes, .env, and users are preserved.'
+    Require (Confirm 'INSTALL' 'Install the Docker stack (Ollama, Odysseus, ChromaDB, SearXNG)? Downloads require disk space and network access.') 'Installation cancelled.'
+    Show-InstallStep 1 'Docker Desktop engine and Compose'
+    Check-Docker
+    & docker info --format 'Engine: {{.ServerVersion}}'
+    Show-InstallStep 2 'Configuration and existing services'
+    Show-Network
+    Show-Status
+    Show-InstallStep 3 'Optional CPU model'
+    Explain 'On slower machines, the 4B model may generate slowly.'
+    if(Confirm 'PULL' 'Download Qwen3.5 4B CPU model and create its profile? This can take several GB.') {
+        Start-Ollama
+        Invoke-Compose @('exec','-T','cpu-ollama','ollama','pull','qwen3.5:4b-q4_K_M')
+        Invoke-Compose @('exec','-T','cpu-ollama','ollama','create','qwen3.5-zarzysseus-cpu:4b','-f','/profiles/Modelfile.quality')
+    } else { Explain 'Model pull skipped. Install from Ollama Management when ready.' }
+    Show-InstallStep 4 'First admin account (before first Odysseus boot)'
+    if(Confirm 'ACCOUNT' 'Set the first admin username/password now? Existing accounts are preserved.') {
+        try { Setup-Admin } catch { Warn "First admin setup unavailable: $($_.Exception.Message). If needed, inspect first-run credentials in Docker logs." }
+    } else { Explain 'Admin setup skipped. The upstream entrypoint may create a temporary password on first boot.' }
+    Show-InstallStep 5 'Start Odysseus and supporting services'
     Start-App
-    Explain 'The initial model is optional on a slower CPU. Select Model setup when ready.'
-    try { Invoke-Bridge 'install' } catch { Warn "Toolkit not ready yet: $($_.Exception.Message). Use Toolkit Install after startup." }
+    Show-Status
+    Show-InstallStep 6 'Install the container agent/skills/MCP toolkit'
+    try { Invoke-Bridge 'install'; Explain 'Toolkit bridge installed.' }
+    catch { Warn "Toolkit installation needs attention: $($_.Exception.Message)" }
+    Explain '--- INSTALL SUMMARY ---'
+    Show-Network
+    Show-Status
+    Explain 'Running containers are not proof of inference readiness. Use Doctor to verify agents and models.'
 }
 function Show-Status {
     Explain "Docker hardware profile: $(Get-Profile) (Full is a feature policy, not automatic GPU activation)"
@@ -131,7 +286,8 @@ Windows Docker: Docker Desktop running Linux containers, with the V11 CPU kit.
 Commands: docker docker-prereq/docker-desktop-install, install/start/stop/restart/status/logs/down, model-setup quality|agent|moe,
 models, ollama-start/stop, pull MODEL, toolkit-install, doctor, repair,
 agent-doctor, agent-rollback, skills-doctor, skills-setup, mcp-health,
-model-advisor, cookbook-fix status|progress, gpu-status.
+model-advisor, cookbook-fix status|progress, gpu-status,
+network-status, network-configure, network-apply, auth-setup.
 The Docker manager runs container-side repairs through the shared checksum-guarded
 agent bridge. Native OS updates, drivers, Windows services, MLX and unrestricted
 host file access are not supported inside containers. AMD RDNA3 GPU service
@@ -162,6 +318,10 @@ function Dispatch([string]$What,[string]$Arg='',[string]$ExtraArg='') {
         'stop' { Invoke-Compose @('--profile','app','stop'); break }
         'restart' { Invoke-Compose @('--profile','app','restart','odysseus'); break }
         'status' { Show-Status; break }
+        'network-status' { Show-Network; break }
+        'network-configure' { Set-Network; break }
+        'network-apply' { Apply-Network; break }
+        'auth-setup' { Setup-Admin; break }
         'logs' { Invoke-Compose @('--profile','app','logs','--tail','120','odysseus'); break }
         'down' { Require (Confirm 'DOWN' 'Stop and remove Compose containers? Named volumes and data will remain.') 'Cancelled.'; Invoke-Compose @('--profile','app','down'); break }
         'ollama-start' { Start-Ollama; break }
@@ -218,7 +378,7 @@ function Show-Menu {
         @{Title='SKILLS.SH / AGENT SKILLS';Options=@((New-MenuEntry 'Installed skills' 'skills-list'),(New-MenuEntry 'Skills health' 'skills-doctor'),(New-MenuEntry 'Approve skill setup' 'skills-setup'),(New-MenuEntry 'Skill model advisor' 'model-advisor'))},
         @{Title='MCP / FREEMCP';Options=@((New-MenuEntry 'MCP health' 'mcp-health'),(New-MenuEntry 'MCP setup' 'mcp-setup'))},
         @{Title='DIAGNOSTICS / TOOLS / ADVANCED';Options=@((New-MenuEntry 'Doctor' 'doctor'),(New-MenuEntry 'Agent repair (guarded)' 'repair'),(New-MenuEntry 'Cookbook status' 'cookbook-fix' 'status'),(New-MenuEntry 'Agent rollback' 'agent-rollback'))},
-        @{Title='NETWORK DISCOVERABILITY';Options=@((New-MenuEntry 'Show local binding' 'status'))}
+        @{Title='NETWORK DISCOVERABILITY';Options=@((New-MenuEntry 'Show binding / port / origins' 'network-status'),(New-MenuEntry 'Change local / LAN / Tailscale binding' 'network-configure'),(New-MenuEntry 'Apply saved binding (recreate app)' 'network-apply'),(New-MenuEntry 'First-run admin account setup' 'auth-setup'))}
     )
     while($true) {
         Write-Host "`n=========== ZARZYSSEUS / WINDOWS DOCKER $((Get-Profile).ToUpperInvariant()) ===========" -ForegroundColor Cyan
