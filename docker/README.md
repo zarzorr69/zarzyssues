@@ -432,3 +432,29 @@ To rerun the helper tests on a computer with Python:
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+## Windows Docker Desktop controller (V11.3)
+
+Windows PowerShell 5.1+ can run the same Linux-container CPU kit without Git Bash.
+Install/start Docker Desktop in **Linux containers** mode, then run from the
+complete Zarzysseus release folder:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 mode docker
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 tui
+```
+
+The Windows-specific controller is `docker/zarzysseus-docker.ps1`. It uses
+Docker Compose directly, retains `.env` and named volumes, and calls the
+same checksum-guarded Python toolkit bridge as Linux Docker for skills,
+MCP, agent and Cookbook repairs. If Docker Desktop is missing, use the
+**Install / Update → Docker Desktop prerequisite check**; downloading Docker
+Desktop requires explicit approval. No Bash is needed on the Windows host.
+
+The Docker menu exposes matching **feature categories**, not every host
+operation. Windows services, driver installation, MLX, and AMD `gfx1100`
+Linux `/dev/kfd` GPU serving cannot be performed in Windows Docker Desktop.
+The hardware `Full` profile never silently enables unsupported GPU engines.
+Windows end-to-end testing is pending; use Docker mode on Linux/ZimaOS for
+an already tested CLI deployment and consult the main README for the
+one-line Windows `curl.exe` bootstrap.

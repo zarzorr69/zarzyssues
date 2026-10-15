@@ -11,9 +11,121 @@ chromadb-start, docker-setup, ollama-sync, tool-health, agent-doctor, agent-repa
 [CmdletBinding()]
 param(
     [Parameter(Position=0)][string]$Action = 'tui',
-    [Parameter(Position=1)][string]$Argument = ''
+    [Parameter(Position=1)][string]$Argument = '',
+    [Parameter(Position=2)][string]$Extra = ''
 )
 $ErrorActionPreference = 'Stop'
+# V11.3 deployment router. Docker mode is evaluated before native Odysseus
+# initialization, host Python/winget checks, or any native service repair.
+$ZZModeDir=Join-Path $env:LOCALAPPDATA 'Zarzysseus'
+$ZZModeFile=Join-Path $ZZModeDir 'deployment-mode.txt'
+$ZZDockerPathFile=Join-Path $ZZModeDir 'docker-kit-path.txt'
+function ZZ-Store([string]$File,[string]$Value) {
+    New-Item -ItemType Directory -Force -Path $ZZModeDir | Out-Null
+    [IO.File]::WriteAllText($File,$Value+"`n",([Text.UTF8Encoding]::new($false)))
+}
+function ZZ-Mode {
+    if(Test-Path -LiteralPath $ZZModeFile) {
+        $m=(Get-Content -LiteralPath $ZZModeFile -Raw).Trim().ToLowerInvariant()
+        if($m -in @('native','docker')) { return $m }
+    }
+    return 'native'
+}
+function ZZ-Profile([string]$Platform) {
+    $f=Join-Path $ZZModeDir "hardware-$Platform.txt"
+    if(Test-Path -LiteralPath $f) {
+        $v=(Get-Content -LiteralPath $f -Raw).Trim().ToLowerInvariant()
+        if($v -in @('cpu','full')) { return $v }
+    }
+    if($Platform -eq 'docker') { return 'cpu' }
+    return 'full'
+}
+function ZZ-DockerKit {
+    $possible=@()
+    if(Test-Path -LiteralPath $ZZDockerPathFile) {
+        $possible+=((Get-Content -LiteralPath $ZZDockerPathFile -Raw).Trim())
+    }
+    $possible+=@( (Join-Path $PSScriptRoot 'docker'), (Join-Path $ZZModeDir 'source/zarzyssues-main/docker') )
+    foreach($candidate in $possible) {
+        if($candidate -and (Test-Path -LiteralPath (Join-Path $candidate 'zarzysseus-docker.ps1')) -and
+           (Test-Path -LiteralPath (Join-Path $candidate 'compose.yaml'))) { return $candidate }
+    }
+    return ''
+}
+function ZZ-GetDockerKit {
+    $kit=ZZ-DockerKit
+    if($kit) { return $kit }
+    Write-Host 'Docker mode requires the complete project (Windows script + docker/ directory).' -ForegroundColor Yellow
+    if(-not [Environment]::UserInteractive -or (Read-Host 'Type DOWNLOAD to fetch the full GitHub source archive') -cne 'DOWNLOAD') {
+        throw 'Docker kit not available. Download the full Zarzysseus release ZIP before running Docker mode.'
+    }
+    $location=Join-Path $ZZModeDir 'source'
+    New-Item -ItemType Directory -Force -Path $location | Out-Null
+    $archive=Join-Path $location 'main.zip'
+    if(-not (Get-Command curl.exe -ErrorAction SilentlyContinue)){ throw 'curl.exe missing from Windows.' }
+    & curl.exe -fL --retry 3 'https://github.com/zarzorr69/zarzyssues/archive/refs/heads/main.zip' -o $archive
+    if($LASTEXITCODE -ne 0){ throw 'Unable to download the complete GitHub source archive.' }
+    Expand-Archive -LiteralPath $archive -DestinationPath $location -Force
+    $kit=ZZ-DockerKit
+    if(-not $kit){ throw 'Downloaded project does not contain the expected Windows Docker kit.' }
+    return $kit
+}
+function ZZ-LaunchDocker([string]$What,[string]$Arg='',[string]$Arg2='') {
+    $kit=ZZ-GetDockerKit
+    & (Join-Path $kit 'zarzysseus-docker.ps1') -Action $What -Argument $Arg -Extra $Arg2
+    if(-not $?) { throw "Windows Docker action $What failed." }
+}
+if($Action -eq 'tui' -and -not (Test-Path -LiteralPath $ZZModeFile) -and [Environment]::UserInteractive) {
+    Write-Host "`n=== ZARZYSSEUS / WINDOWS FIRST START ===" -ForegroundColor Cyan
+    Write-Host '1 Native Windows (PowerShell / local Odysseus)'
+    Write-Host '2 Docker Desktop (isolated Linux containers)'
+    $select=Read-Host 'Choose deployment [1/2]'
+    if($select -eq '2') { ZZ-Store $ZZModeFile 'docker' }
+    else { ZZ-Store $ZZModeFile 'native' }
+}
+if($Action -eq 'mode') {
+    if($Argument -in @('docker','native')) {
+        if($Argument -eq 'docker'){ $null=ZZ-GetDockerKit }
+        ZZ-Store $ZZModeFile $Argument
+        Write-Host "Saved Windows deployment: $Argument; no services were started or changed."
+    } elseif($Argument -eq '' -or $Argument -eq 'status') {
+        Write-Host "Windows deployment: $(ZZ-Mode); native hardware: $(ZZ-Profile native); Docker hardware: $(ZZ-Profile docker)"
+    } else { throw 'Use mode native|docker|status.' }
+    return
+}
+if($Action -eq 'docker-path') {
+    if(-not $Argument -or -not (Test-Path -LiteralPath (Join-Path $Argument 'compose.yaml')) -or
+       -not (Test-Path -LiteralPath (Join-Path $Argument 'zarzysseus-docker.ps1'))) {
+        throw 'Specify the directory containing compose.yaml and zarzysseus-docker.ps1.'
+    }
+    ZZ-Store $ZZDockerPathFile ([IO.Path]::GetFullPath($Argument))
+    Write-Host 'Windows Docker kit directory saved; existing .env and volumes are unchanged.'
+    return
+}
+if($Action -eq 'profile') {
+    if($Argument -eq '' -or $Argument -eq 'status') {
+        Write-Host "Windows native: $(ZZ-Profile native); Docker: $(ZZ-Profile docker)"
+    } else {
+        if($Argument -notin @('docker','native') -or $Extra -notin @('cpu','full')) {
+            throw 'Use profile docker|native cpu|full.'
+        }
+        ZZ-Store (Join-Path $ZZModeDir "hardware-$Argument.txt") $Extra
+        Write-Host "Saved $Argument profile: $Extra. No model or service was restarted."
+        if($Argument -eq 'native' -and $Extra -eq 'cpu') {
+            Write-Host 'Native Windows CPU-only is advisory. Confirm your Ollama/driver device configuration separately.' -ForegroundColor Yellow
+        }
+    }
+    return
+}
+if($Action -eq 'docker') {
+    ZZ-LaunchDocker $(if($Argument){$Argument}else{'tui'}) $Extra
+    return
+}
+if($Action -eq 'tui' -and (ZZ-Mode) -eq 'docker') {
+    ZZ-LaunchDocker 'tui'
+    return
+}
+# End deployment router. All previous Windows native commands remain intact.
 $RepoUrl = 'https://github.com/odysseus-dev/odysseus.git'
 $StateDir = Join-Path $env:LOCALAPPDATA 'Zarzysseus'
 $StateFile = Join-Path $StateDir 'project-path.txt'
@@ -4838,6 +4950,8 @@ function Main-Menu {
         Write-Host '24 Agent Repair + browser reasoning-only recovery'
         Write-Host '25 Agent routing + recovery smoke test'
         Write-Host '26 Roll back latest agent reliability patch'
+        Write-Host '27 Switch to Docker Desktop mode (requires full source)'
+        Write-Host '28 Set native CPU-only / Full profile (advisory)'
         Write-Host '0  Exit'
         Write-Host 'Tip: star https://github.com/zarzorr69/zarzyssues if it helps you!' -ForegroundColor DarkCyan
         $choice=Read-Host 'Choose'
@@ -4848,7 +4962,7 @@ function Main-Menu {
                 '9'{Show-Accelerator};'10'{Enable-Startup};'11'{Disable-Startup};
                 '12'{Update-Repo};'13'{Network-Menu};'14'{Workspace-Default};
                 '15'{Ensure-Chromadb -Force};'16'{Sync-Ollama};'17'{Tool-Health};
-                '18'{Install-QwenToolFocus};'19'{if (Ensure-Docker -Force) { Ensure-Chromadb -Force }};'20'{Mcp-Menu};'21'{Install-ChatContinuityFix};'22'{Install-CookbookFixes};'23'{Agent-Doctor};'24'{Agent-Repair};'25'{Invoke-AgentReliability 'smoke';Invoke-AgentRuntimeV3 'smoke'};'26'{Agent-Rollback};'0'{return};default{Warn 'Unknown choice.'}
+                '18'{Install-QwenToolFocus};'19'{if (Ensure-Docker -Force) { Ensure-Chromadb -Force }};'20'{Mcp-Menu};'21'{Install-ChatContinuityFix};'22'{Install-CookbookFixes};'23'{Agent-Doctor};'24'{Agent-Repair};'25'{Invoke-AgentReliability 'smoke';Invoke-AgentRuntimeV3 'smoke'};'26'{Agent-Rollback};'27'{ $null=ZZ-GetDockerKit; ZZ-Store $ZZModeFile 'docker'; Write-Host 'Docker mode saved. Reopen the TUI to enter Docker mode.'; return };'28'{ $desired=Read-Host 'Type cpu or full'; if($desired -in @('cpu','full')) { ZZ-Store (Join-Path $ZZModeDir 'hardware-native.txt') $desired; Write-Host 'Saved. CPU-only native is advisory until backend GPU selection is configured.' } };'0'{return};default{Warn 'Unknown choice.'}
             }
         }catch{Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red}
     }

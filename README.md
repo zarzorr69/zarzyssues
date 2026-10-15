@@ -3,10 +3,12 @@
 **Install, run, and manage [Odysseus](https://github.com/odysseus-dev/odysseus) through an interactive menu.** Zarzysseus helps you choose models that fit your computer, connect skills and MCP tools, manage services, and troubleshoot problems without memorizing dozens of commands.
 
 - **On Linux:** choose **Native** (runs on your computer) or **Docker** (runs in containers), then choose **CPU-only** or **Full** hardware support. You can switch modes later.
-- **On Windows:** use the native PowerShell installer and its numbered menus. Docker and hardware-profile menu parity are not yet available there.
+- **On Windows:** choose **Native PowerShell** or **Docker Desktop (Linux containers)**. Both have CPU-only/Full profile choices; the native Windows CPU-only preference is advisory, and Docker Desktop does not provide the AMD RDNA3 Linux GPU service.
 - **If you're new:** start with the quick command below, then follow the [guided walkthroughs](#guided-walkthroughs-use-the-tui-first). Advanced commands and technical explanations are further down.
 
 Zarzysseus is a companion tool, **not** an alternative copy of Odysseus. You choose when to install services, download models, or approve third-party tools.
+
+> **V11.3 cross-platform update:** Windows can now manage the same containerized CPU stack and container-side agent, skills, MCP, model and Cookbook tools from a native PowerShell menu. Linux Docker and ZimaOS retain their dedicated curl quick starts; the Windows Docker quick start downloads the full release. Native host-only actions are not silently passed into Docker.
 
 > **V11.2 ZimaOS update:** Docker's Install/Update confirmation no longer crashes when it is called with one argument. Docker mode now offers a full-screen arrow-key menu in compatible SSH terminals, with a numbered fallback. The Native/Full AMD RDNA3 doctor uses the isolated Docker runtime without changing your Docker hardware profile. [Read the details](#v112--zimaos-install-and-tui-reliability).
 
@@ -14,11 +16,13 @@ Zarzysseus is a companion tool, **not** an alternative copy of Odysseus. You cho
 
 ### Start on Linux with curl (one line)
 
-Copy this **one line** into a Linux terminal (Bash, Fish, or Zsh). It downloads the **complete Zarzysseus project**, including the Docker files, into a folder that stays on your computer. Then it opens the interactive menu.
+Copy this **one line** into a regular Linux terminal (Bash, Fish, or Zsh) with a **writable home directory**. It downloads the **complete Zarzysseus project**, including the Docker files, into a folder that stays on your computer. Then it opens the interactive menu.
 
 ```bash
 mkdir -p "$HOME/.local/share/zarzysseus" && curl -fL --retry 3 https://github.com/zarzorr69/zarzyssues/archive/refs/heads/main.tar.gz -o "$HOME/.local/share/zarzysseus-source.tar.gz" && tar -xzf "$HOME/.local/share/zarzysseus-source.tar.gz" -C "$HOME/.local/share/zarzysseus" --strip-components=1 && bash "$HOME/.local/share/zarzysseus/zarzysseus.sh"
 ```
+
+**Using Docker or ZimaOS?** For Docker-specific commands, see the [Docker Linux one-liner](#docker-on-regular-linux-curl-one-liner) or [Docker ZimaOS one-liner](#docker-on-zimaos-curl-one-liner). The generic command above may fail on ZimaOS because `/DATA/.local` is not writable.
 
 **What happens next?** Choose **Native** or **Docker**, then **CPU-only** or **Full**. Nothing is installed merely by opening the menu: follow **Install / Update** and approve the components you want. Docker mode requires Docker Engine and Compose; Native mode installs and manages services on the host.
 
@@ -30,6 +34,91 @@ bash "$HOME/.local/share/zarzysseus/zarzysseus.sh"
 
 This uses the repository's current `main` branch. Read the [installation and safety notes](#linux-installation) if you prefer to inspect the files first or already have a customized copy. **Termux itself is not a supported Linux installation target**; run Zarzysseus on an actual Linux machine or server.
 
+## 🐳 Docker quick start: Linux and ZimaOS
+
+These commands download the **whole project** (the launcher **and** the `docker/` files), select **Docker mode**, and open the interactive menu. They **do not** install containers, pull models, or restart an existing stack. Choose **CPU-only** for a server without a dedicated GPU; use **Full** only where the additional runtimes are supported.
+
+### Docker on regular Linux: curl one-liner
+
+For Linux distributions with a **writable home directory**, paste this into Bash, Fish, or Zsh:
+
+```bash
+mkdir -p "$HOME/.local/share/zarzysseus" && curl -fL --retry 3 https://github.com/zarzorr69/zarzyssues/archive/refs/heads/main.tar.gz -o "$HOME/.local/share/zarzysseus-source.tar.gz" && tar -xzf "$HOME/.local/share/zarzysseus-source.tar.gz" -C "$HOME/.local/share/zarzysseus" --strip-components=1 && bash "$HOME/.local/share/zarzysseus/zarzysseus.sh" mode docker && bash "$HOME/.local/share/zarzysseus/zarzysseus.sh" tui
+```
+
+**Next:** Choose your **CPU-only / Full** profile if prompted. From **Docker → Install / Update**, approve an installation only if you're setting up a *new* stack. Docker Engine and Docker Compose must already be available. For older servers with an existing kit, see [Reuse your Docker CPU kit](#reuse-an-existing-docker-cpu-kit-before-installing).
+
+Reopen later with `bash "$HOME/.local/share/zarzysseus/zarzysseus.sh"`. You can return to the Native menu at any time; switching menus doesn't migrate or remove services.
+
+### Docker on ZimaOS: curl one-liner
+
+On some ZimaOS systems, `$HOME` is `/DATA` but the current account **cannot write to `/DATA/.local`**. Use a dedicated folder instead. Paste this into your **ZimaOS SSH session** (including Termius):
+
+```bash
+sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 755 /DATA/zarzysseus-unified && curl -fL --retry 3 https://github.com/zarzorr69/zarzyssues/archive/refs/heads/main.tar.gz -o /DATA/zarzysseus-unified/source.tar.gz && tar -xzf /DATA/zarzysseus-unified/source.tar.gz -C /DATA/zarzysseus-unified --strip-components=1 && bash /DATA/zarzysseus-unified/zarzysseus.sh mode docker && bash /DATA/zarzysseus-unified/zarzysseus.sh tui
+```
+
+**Why `sudo` here?** It creates **only** `/DATA/zarzysseus-unified`, owned by your SSH account. The download, extraction, and launcher then run as **your regular user**, not root. Don't change the ownership or permissions of the whole `/DATA` volume.
+
+**Next:** Select **CPU-only** for your ZimaOS CPU server. If you've already installed the separate Zarzysseus CPU starter kit, **do not choose the fresh-stack install yet**; connect it and preview the update using the steps below. Opening the Docker menu alone cannot create duplicate containers.
+
+Reopen later with:
+
+```bash
+bash /DATA/zarzysseus-unified/zarzysseus.sh
+```
+
+If your SSH client cannot display the full-screen menu, choose the numbered fallback:
+
+```bash
+ZARZYSSEUS_MENU_STYLE=plain bash /DATA/zarzysseus-unified/zarzysseus.sh
+```
+
+### Reuse an existing Docker CPU kit before installing
+
+Zarzysseus prefers a detected, existing CPU kit instead of creating a second stack. If the kit is stored somewhere else, set the path explicitly (**use your actual kit directory**):
+
+```bash
+bash /DATA/zarzysseus-unified/zarzysseus.sh docker-path /DATA/zarzysseus-cpu-starter-kit/zarzysseus-cpu-kit
+bash /DATA/zarzysseus-unified/zarzysseus.sh docker-kit-sync         # Preview only
+bash /DATA/zarzysseus-unified/zarzysseus.sh docker-kit-sync apply   # Back up changes; type SYNC to approve
+```
+
+The preview does not modify the kit. Applying sync can replace kit **source files**, so review customized Compose settings first; it preserves `.env`, model volumes, workspaces, and application data. After sync, use **Docker → Service Management → Status** to inspect the existing containers before deciding whether anything needs restarting.
+
+> **Safety:** All quick starts use the repository's current `main` branch. [Review the source](https://github.com/zarzorr69/zarzyssues) if you prefer before executing it. Docker tools may need permission to access the daemon, but **do not run the entire Zarzysseus TUI with `sudo`**. Termux can be used as an SSH client for ZimaOS, not as a supported Docker host for this project.
+
+### Docker on Windows: PowerShell curl.exe one-liner
+
+**Requires:** Windows 10/11, PowerShell 5.1+, and **Docker Desktop running Linux containers** with Compose v2. Docker Desktop may require WSL 2 and virtualization enabled. There is no need to install Bash or a Linux VM manually for the Zarzysseus menu.
+
+Open **Windows PowerShell** and paste this **single line**. It downloads the **entire source archive** (including `docker/`), extracts it to a persistent folder under `%LOCALAPPDATA%`, selects Docker mode, and opens the Windows Docker TUI:
+
+```powershell
+$d=Join-Path $env:LOCALAPPDATA 'Zarzysseus\source'; New-Item -ItemType Directory -Force -Path $d | Out-Null; $z=Join-Path $d 'main.zip'; curl.exe -fL --retry 3 'https://github.com/zarzorr69/zarzyssues/archive/refs/heads/main.zip' -o $z; if($LASTEXITCODE -ne 0){throw 'Download failed'}; Expand-Archive -LiteralPath $z -DestinationPath $d -Force; $p=Join-Path $d 'zarzyssues-main\zarzysseus.ps1'; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p mode docker; if($LASTEXITCODE -ne 0){throw 'Docker mode setup failed'}; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p tui
+```
+
+If Docker Desktop is not running or not using **Linux containers**, the menu opens with a prerequisite-check option and an approved Docker Desktop setup action. **Opening the menu does not install containers or download model weights.** When ready, use **Install / Update**, read the approval prompt, then choose the CPU model you want. The same container toolkit exposes guarded browser/agent repairs, Skills Doctor, MCP health, model advice, and Cookbook health; these require Odysseus to be running inside the container.
+
+To reopen Docker mode later:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Zarzysseus\source\zarzyssues-main\zarzysseus.ps1" tui
+```
+
+To switch between deployments and hardware profiles without reinstalling:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Zarzysseus\source\zarzyssues-main\zarzysseus.ps1" mode native
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Zarzysseus\source\zarzyssues-main\zarzysseus.ps1" mode docker
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Zarzysseus\source\zarzyssues-main\zarzysseus.ps1" profile docker cpu
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Zarzysseus\source\zarzyssues-main\zarzysseus.ps1" profile docker full
+```
+
+**Existing Docker data:** Docker Compose named volumes and `docker/.env` are preserved when you reopen the TUI. Downloading a newer archive overwrites tracked source files, so back up any custom changes to Compose before upgrading. The Windows Docker kit has been implemented and statically checked, **but a live Windows Docker Desktop deployment has not yet been verified**.
+
+**Runtime limits:** Docker Desktop on Windows can run the CPU Ollama/ChromaDB/SearXNG/Odysseus kit. The native Linux AMD `gfx1100`/`/dev/kfd` RDNA3 runtime, direct Windows service management, GPU driver installation, and host MLX do **not** have a safe Windows-container equivalent. The **Full** profile exposes supported container features; it does not claim unsupported GPU backends work. Use Linux Docker/Full on a compatible ROCm host for the isolated RDNA3 diagnostic.
+
 ### Start on Windows with curl.exe (one line)
 
 Open **Windows PowerShell** (Windows 10/11, PowerShell 5.1 or later) and paste this single line:
@@ -38,7 +127,7 @@ Open **Windows PowerShell** (Windows 10/11, PowerShell 5.1 or later) and paste t
 $d=Join-Path $env:LOCALAPPDATA 'Zarzysseus'; New-Item -ItemType Directory -Force -Path $d | Out-Null; $f=Join-Path $d 'zarzysseus.ps1'; curl.exe -fL --retry 3 'https://raw.githubusercontent.com/zarzorr69/zarzyssues/main/zarzysseus.ps1' -o $f; if ($LASTEXITCODE -ne 0) { throw 'Download failed.' }; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $f
 ```
 
-This saves the **native Windows installer** to `%LOCALAPPDATA%\Zarzysseus\zarzysseus.ps1` and opens its **numbered interactive menu**. It is a Windows-native launcher; the Linux Native/Docker and CPU-only/Full switches do not apply to this edition.
+This saves the **Windows launcher** to `%LOCALAPPDATA%\Zarzysseus\zarzysseus.ps1` and opens its interactive menu. Choose **Native Windows** for local setup. If you choose Docker, the launcher asks permission to download the full project because Docker requires additional files. For the more direct Docker setup, use the [Windows Docker one-liner](#docker-on-windows-powershell-curlexe-one-liner) instead.
 
 **Next:** Select the installation option in the TUI, review its prompts, and install only the components you want. Downloading and opening the menu does not automatically install Odysseus.
 
@@ -62,7 +151,9 @@ Want the menus rather than commands? Start with the **[step-by-step TUI walkthro
 | Installation | First-time setup |
 | :--- | :--- |
 | 🐧 **[Linux: install and open the TUI](#linux-installation)** | ✅ **[First-run checklist](#first-run-checklist)** |
-| 🪟 **[Windows: curl quick start](#start-on-windows-with-curlexe-one-line)** | 🤗 **[Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows)** |
+| 🐳 **[Docker: Linux curl one-liner](#docker-on-regular-linux-curl-one-liner)** | 🗄️ **[Docker: ZimaOS curl one-liner](#docker-on-zimaos-curl-one-liner)** |
+| 🪟 **[Windows Native: curl](#start-on-windows-with-curlexe-one-line)** | 🐳 **[Windows Docker: curl](#docker-on-windows-powershell-curlexe-one-liner)** |
+| 🤗 **[Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows)** |
 
 ### 🛠️ Find a fix fast
 
@@ -115,7 +206,7 @@ Want the menus rather than commands? Start with the **[step-by-step TUI walkthro
 
 ## Getting started in three steps
 
-1. **Open the menu.** Use the [Linux curl one-liner](#start-on-linux-with-curl-one-line) or [Windows curl.exe one-liner](#start-on-windows-with-curlexe-one-line), then follow the on-screen menu.
+1. **Open the menu.** Use the [Linux curl one-liner](#start-on-linux-with-curl-one-line), a [Docker Linux](#docker-on-regular-linux-curl-one-liner) / [ZimaOS](#docker-on-zimaos-curl-one-liner) one-liner, or the [Windows curl.exe one-liner](#start-on-windows-with-curlexe-one-line); then follow the on-screen menu.
 2. **Choose where Odysseus will run.** On Linux, select **Native** for a regular desktop install or **Docker** for a containerized server. Next, choose **CPU-only** for systems without a supported GPU or **Full** if you want the available GPU/runtime options. This is a preference, not an immediate install.
 3. **Install, start, and open Odysseus.** Follow **Install / Update**, then **Service Management → Start/Status**. Open the address shown by your installation. A native default is `http://127.0.0.1:7000`; Docker addresses/ports come from the Compose configuration.
 
@@ -206,7 +297,7 @@ ZARZYSSEUS — DOCKER MODE
  13 SWITCH CPU-ONLY / FULL PROFILE
 ```
 
-1. At first launch choose **Docker**, then **CPU-only** for a server without a dedicated GPU. Docker Engine and Docker Compose must already be available; [Docker setup help](#docker-and-chromadb-setup-linux-and-windows) explains the prerequisites.
+1. Start with the [regular Docker Linux command](#docker-on-regular-linux-curl-one-liner) or the [ZimaOS Docker command](#docker-on-zimaos-curl-one-liner). Choose **CPU-only** for a server without a dedicated GPU. Docker Engine and Docker Compose must already be available; [Docker setup help](#docker-and-chromadb-setup-linux-and-windows) explains the prerequisites.
 2. Go to **1 Install / Update → Install Odysseus + CPU model**. Read the confirmation before pulling images or models. It can take a while on a CPU-only machine.
 3. Choose **2 Service Management → Show status**. Start Odysseus if necessary, then look at **Show logs** if a container stops.
 4. Go to **5 Ollama Management → List installed models**. If you want another CPU profile, choose the quality/agent model setup item. These downloads are optional.
@@ -706,11 +797,7 @@ This is a small compatibility release; it **does not replace** the V8 browser wo
 
 ### ZimaOS: where to download Zarzysseus
 
-Some ZimaOS accounts have `$HOME=/DATA` but lack write permission to `/DATA/.local/share`. Avoid changing permissions on the whole `/DATA` directory. Use a dedicated folder instead:
-
-```bash
-sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 755 /DATA/zarzysseus-unified && curl -fL --retry 3 https://github.com/zarzorr69/zarzyssues/archive/refs/heads/main.tar.gz -o /DATA/zarzysseus-unified/source.tar.gz && tar -xzf /DATA/zarzysseus-unified/source.tar.gz -C /DATA/zarzysseus-unified --strip-components=1 && bash /DATA/zarzysseus-unified/zarzysseus.sh
-```
+Some ZimaOS accounts have `$HOME=/DATA` but lack write permission to `/DATA/.local/share`. Avoid changing permissions on the whole `/DATA` directory. Use the dedicated [ZimaOS Docker curl one-liner](#docker-on-zimaos-curl-one-liner) above: it creates `/DATA/zarzysseus-unified` with safe ownership, downloads the complete project, and opens the Docker menu.
 
 When your Docker CPU kit is already installed, point Zarzysseus at it rather than starting a second instance. Preview changes before applying:
 
@@ -1199,6 +1286,8 @@ The choice is stored under `~/.config/zarzysseus/system-auto-update` and survive
 
 ## Windows installation
 
+Windows now has two deployment choices: **Native Windows** and **Docker Desktop (Linux containers)**. The [Windows Native curl quick start](#start-on-windows-with-curlexe-one-line) downloads the PowerShell script; the [Windows Docker curl quick start](#docker-on-windows-powershell-curlexe-one-liner) downloads the full source archive needed for Compose. Both open a menu; neither immediately pulls models.
+
 **Fastest way:** use the [Windows `curl.exe` one-liner](#start-on-windows-with-curlexe-one-line) in Quick Links. It downloads the installer to a persistent folder and opens the TUI. You can also use the two-step method below if you want to inspect the file before executing it.
 
 Use **Windows PowerShell 5.1 or later** on Windows 10/11. Paste the following into PowerShell; the script downloads to a file before execution, preserving keyboard input for its menu:
@@ -1630,3 +1719,11 @@ Zarzysseus is an independently maintained installer and management toolkit built
 **Enjoying Zarzysseus?**
 
 **A ⭐ on [the project](https://github.com/zarzorr69/zarzyssues) would mean a lot — thank you for supporting it!**
+
+### V11.3 — Windows Docker deployment and cross-platform capability guide
+
+- Added a saved **Native Windows / Docker Desktop** deployment selector to `zarzysseus.ps1` plus a separate **Docker CPU-only / Full** profile choice.
+- Added a Windows-native PowerShell Docker manager using Docker Compose with the bundled Linux container kit; no Git Bash dependency.
+- Exposed compatible **service/model/agent/skills/MCP/Cookbook** actions through the same in-container Zarzysseus bridge, with explicit approval for downloads and repairs.
+- Added **Docker Linux, Docker ZimaOS, and Docker Windows** first-run curl commands, each downloading the complete source files.
+- Kept native host-only work separate: full menu parity is a navigation contract, **not a promise that every host-specific operation is supported in Docker**. Windows Docker live execution is pending validation.
