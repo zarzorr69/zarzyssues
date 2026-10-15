@@ -43,6 +43,8 @@ Want the menus rather than commands? Start with the **[step-by-step TUI walkthro
 
 **📊 [Cookbook: progress bar, status updates and Show logs](#cookbook-clean-live-download-progress-v102)**
 
+**🩹 [V11.8: Docker missing Modelfile and Native offline model repair](#v118--repair-missing-docker-modelfiles-and-dead-native-model-endpoints)**
+
 **🩺 [Full troubleshooting guide →](#quick-start-and-troubleshooting)** — diagnostics first, repairs only when needed.
 
 <details>
@@ -902,6 +904,26 @@ bash /DATA/zarzysseus-unified/zarzysseus.sh docker-kit-sync apply  # review firs
 ```
 
 Your `.env`, credentials, existing models, workspaces, and named Docker volumes stay in place. **A successful TUI/install simulation isn't proof that every model works on every CPU.** Verify services and Ollama models after applying a kit update.
+
+## V11.8 — Repair missing Docker Modelfiles and dead Native model endpoints
+
+**ZimaOS Docker `/profiles/Modelfile.quality` missing:** Updating the kit's files with `docker-kit-sync` does **not** recreate an existing Ollama container. V11.8 adds **Docker → Ollama Management → Check Qwen Modelfile mount** (read-only) and **Repair Qwen Modelfile mount**. The repair requires typing `REMOUNT`, recreates only `cpu-ollama` using the existing Compose definition, and keeps Ollama's named model volume and your Odysseus account data. The repair does **not** redownload the base Qwen weights.
+
+```bash
+bash /DATA/zarzysseus-unified/zarzysseus.sh docker model-mount-check
+bash /DATA/zarzysseus-unified/zarzysseus.sh docker model-mount-repair
+# At the prompt, review the change and type REMOUNT.
+# Then use Docker → Ollama Management → Install Qwen3.5 CPU quality profile.
+```
+
+**Native Linux: `tipsv2-g14` selected but `Cannot reach http://localhost:8000`:** `tipsv2-g14` is not a conversational LLM. V11.8 adds **Native → Diagnostics / Tools / Advanced → Inspect Offline / Unsupported Model Endpoints**, and a separate explicit disable action for a verified offline `tipsv2` endpoint. The new doctor reads Odysseus's **SQLite** endpoint records without modifying them, shows endpoint IDs and checks loopback TCP reachability. You can opt in to **disable one exact endpoint ID**, after typing `DISABLE`; a private SQLite backup is created first. No model files or chat history are deleted. External databases, non-local endpoints, reachable ports and endpoints that cannot be identified as `tipsv2` are **not** modified; use the authenticated Odysseus **Admin → Services** page for those cases.
+
+```bash
+bash /path/to/zarzysseus.sh native model-endpoint-doctor
+bash /path/to/zarzysseus.sh native model-endpoint-disable THE_ID_SHOWN_BY_DOCTOR
+```
+
+After disabling the stale entry, refresh Odysseus and start a **new chat** with a supported Ollama chat model. Previously saved chats can retain their old model selection. This fix does **not** repair native ROCm SGLang or convert non-chat Hugging Face checkpoints to chat models.
 
 ## V11.7 — ZimaOS Docker account menu and Modelfile mount recovery
 
@@ -1802,6 +1824,13 @@ The Windows edition now **installs Docker Desktop during committed app installat
 A model's final answer alone is not proof. In Agent Mode, explicitly request an available tool (for example, `Call get_workspace now`) and inspect the Odysseus tool-execution UI/logs for a native tool call and its result. An endpoint flag of `True` and `native_tools=True` only mean the model was **offered** schemas; a valid direct Ollama call does not guarantee that the full Agent request invokes one. Tool approval and security rules still apply.
 
 ## Changelog
+
+### V11.8 — Docker mount diagnostics and Native endpoint cleanup
+
+- Added read-only Docker Qwen Modelfile mount check and an explicit `REMOUNT` action, preserving downloaded model volumes and existing application data.
+- Added a Native Linux SQLite model-endpoint doctor for offline/unsupported registrations, especially the non-chat `tipsv2-g14` endpoint on localhost:8000.
+- Added confirmation-gated disabling of exactly one offline `tipsv2` endpoint with a private database backup; refuses to modify online, external or mixed-model endpoints.
+- Added Native and Docker TUI entries, documentation, and new regression tests; no GPU SGLang environment is modified.
 
 ### V11.7 — Docker model mount recovery and discoverable account settings
 

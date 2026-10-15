@@ -498,6 +498,8 @@ dispatch() {
         ollama-restart) dc restart cpu-ollama ;;
         warm) kit_run warm "${1:-quality}" ;;
         benchmark) kit_run benchmark "${1:-quality}" ;;
+        model-mount-check) kit_run mount-check "${1:-quality}" ;;
+        model-mount-repair) kit_run mount-repair "${1:-quality}" ;;
         model-setup) kit_run setup "${1:-quality}" ;;
         pull|opull|ollama-pull)
             [[ $# == 1 && "$1" != -* ]] || { echo 'Usage: pull MODEL:TAG' >&2; return 2; }
@@ -524,6 +526,8 @@ Navigation categories mirror the native edition; implementations run in Compose.
   model-setup quality|agent|moe  Explicit CPU model download/profile setup
   models / model-list / pull MODEL / warm / benchmark
   model-doctor             Check installed Ollama models and Odysseus container reachability (read-only)
+  model-mount-check [quality|agent|moe]   Inspect Ollama /profiles Modelfile bind mount (read-only)
+  model-mount-repair [quality|agent|moe]  Confirm REMOUNT; recreate only Ollama, keep volumes
   model-advisor / skills-doctor / skills-install NAME / skills-setup
   mcp-health / mcp-setup / cookbook-fix status|progress
   doctor / repair / agent-doctor / agent-rollback
@@ -814,7 +818,7 @@ menu() {
         _zd_choose "ZARZYSSEUS — DOCKER MODE — ${profile^^} PROFILE" "${menu_items[@]}" || return 0
         option="$ZD_SELECTION"
         case "$option" in
-            1) submenu 'INSTALL / UPDATE' 'Install Odysseus + CPU model (always available)|install' 'Install/refresh toolkit helper|toolkit-install' 'Check current status|status' 'First-run admin account setup|auth-setup' 'Existing-account password help|auth-help' ;;
+            1) submenu 'INSTALL / UPDATE' 'Install Odysseus + CPU model (always available)|install' 'Install/refresh toolkit helper|toolkit-install' 'Check current status|status' 'Check Ollama Modelfile mount|model-mount-check' 'Repair Ollama Modelfile mount (confirm REMOUNT)|model-mount-repair' 'First-run admin account setup|auth-setup' 'Existing-account password help|auth-help' ;;
             2) submenu 'SERVICES' 'Start Odysseus|start' 'Stop services|stop' 'Restart Odysseus|restart' 'Show status|status' 'Show logs|logs' 'Stop containers, retain volumes|down' ;;
             3)
                 if [[ "$profile" == full ]]; then
@@ -823,7 +827,7 @@ menu() {
                     submenu 'MODEL RUNTIMES — CPU-ONLY' 'CPU Ollama readiness|ollama-status' 'List CPU Ollama models|models' 'CPU model benchmark|benchmark quality'
                 fi ;;
             4) submenu 'MODEL MANAGER / HARDWARE FIT' 'Model visibility doctor (container + UI)|model-doctor' 'Skill-aware model advisor|model-advisor' 'Models in CPU Ollama|models' 'Benchmark quality model|benchmark quality' ;;
-            5) submenu 'OLLAMA MANAGEMENT' 'Install Qwen3.5 CPU quality profile|model-setup quality' 'Install LFM 2.6B agent profile|model-setup agent' 'Warm quality model|warm quality' 'List installed models|models' 'Diagnose Odysseus model visibility|model-doctor' 'Pull a named model|prompt:pull' 'Stop model backend|ollama-stop' ;;
+            5) submenu 'OLLAMA MANAGEMENT' 'Install Qwen3.5 CPU quality profile|model-setup quality' 'Install LFM 2.6B agent profile|model-setup agent' 'Warm quality model|warm quality' 'List installed models|models' 'Diagnose Odysseus model visibility|model-doctor' 'Check Qwen Modelfile mount|model-mount-check' 'Repair Qwen Modelfile mount|model-mount-repair' 'Pull a named model|prompt:pull' 'Stop model backend|ollama-stop' ;;
             6) unsupported 'macOS MLX-LM on a Linux CPU container' || : ;;
             7) submenu 'HUGGING FACE / MODEL FILES' 'Catalog/model advisor (read only)|model-advisor' 'Why no Hugging Face chat launcher?|info:hf' ;;
             8) submenu 'SKILLS.SH / AGENT SKILLS' 'List installed skills|skills-list' 'Search skill|prompt:skills-search' 'Install selected skill|prompt:skills-install' 'Skills + MCP health|skills-doctor' 'Approve/setup dependencies|skills-setup' 'Skill model advisor|model-advisor' ;;

@@ -17576,6 +17576,26 @@ tui_agent_menu() {
     done
 }
 
+native_model_endpoint_doctor() {
+    local doctor="$_ZZ_LAUNCH_DIR/zarzysseus_model_endpoint_doctor_v11_8.py"
+    [[ -f "$doctor" ]] || { echo '[ERROR] V11.8 native endpoint doctor missing. Download the full Zarzysseus release.' >&2; return 2; }
+    command -v python3 >/dev/null 2>&1 || { echo '[ERROR] python3 is required for this native diagnostic.' >&2; return 2; }
+    if [[ "${1:-}" == disable ]]; then
+        [[ -n "${2:-}" ]] || { echo 'Usage: model-endpoint-disable ENDPOINT_ID (obtain ID from model-endpoint-doctor)' >&2; return 2; }
+        python3 "$doctor" --project "$PROJECT_DIR" --disable-id "$2"
+    else
+        python3 "$doctor" --project "$PROJECT_DIR"
+    fi
+}
+
+tui_endpoint_repair_menu() {
+    local endpoint_id
+    _tui_prompt 'Offline tipsv2 endpoint ID (copy from read-only model-endpoint-doctor)'
+    endpoint_id="$TUI_INPUT"
+    [[ -n "$endpoint_id" ]] || return 0
+    _tui_run_command 'Backup and disable this offline non-chat endpoint (confirm DISABLE)' model-endpoint-disable "$endpoint_id"
+}
+
 tui_diagnostics_menu() {
     local choice
     while true; do
@@ -17595,6 +17615,8 @@ tui_diagnostics_menu() {
             'SHOW FULL COMMAND HELP' \
             'AGENT DIAGNOSTICS / REPAIR / ROLLBACK' \
             'AMD RDNA3 GPU RUNTIME DOCTOR (ISOLATED DOCKER)' \
+            'INSPECT OFFLINE / UNSUPPORTED MODEL ENDPOINTS' \
+            'DISABLE OFFLINE TIPSV2 ENDPOINT (WITH SQLITE BACKUP)' \
             'BACK'; then
             choice="$TUI_CHOICE"
             case "$choice" in
@@ -17613,7 +17635,9 @@ tui_diagnostics_menu() {
                 12) tui_help_screen ;;
                 13) tui_agent_menu ;;
                 14) _tui_run_command 'AMD RDNA3 isolated runtime doctor (native full)' native-gpu-doctor ;;
-                15) return 0 ;;
+                15) _tui_run_command 'Native model endpoint doctor (read only)' model-endpoint-doctor ;;
+                16) tui_endpoint_repair_menu ;;
+                17) return 0 ;;
             esac
         else
             return 0
@@ -17802,6 +17826,12 @@ case "$ACTION" in
         ;;
     tool-health)
         tool_calling_health
+        ;;
+    model-endpoint-doctor)
+        native_model_endpoint_doctor status
+        ;;
+    model-endpoint-disable)
+        native_model_endpoint_doctor disable "${2:-}"
         ;;
     agent-doctor)
         agent_doctor

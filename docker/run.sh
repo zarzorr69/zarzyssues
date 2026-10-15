@@ -79,7 +79,29 @@ start_model_server() {
   exit 1
 }
 
+profile_mount_status() {
+  local host_file="./models/Modelfile.$profile" container_file="/profiles/Modelfile.$profile"
+  if [[ ! -s "$host_file" || -L "$host_file" ]]; then
+    printf '[MISSING HOST PROFILE] %s\n' "$PWD/$host_file" >&2
+    return 2
+  fi
+  # Read-only check: avoid starting or recreating Docker containers.
+  if dc exec -T cpu-ollama cat "$container_file" 2>/dev/null | cmp -s "$host_file" -; then
+    printf '[OK] /profiles/Modelfile.%s is mounted and matches the host.\n' "$profile"
+  else
+    printf '[MOUNT MISMATCH] /profiles/Modelfile.%s missing/stale. Run mount-repair %s; no models need redownloading.\n' "$profile" "$profile" >&2
+    return 2
+  fi
+}
+
 case "${1:-help}" in
+  mount-check)
+    profile_mount_status
+    ;;
+  mount-repair)
+    start_model_server --pull never --no-deps
+    ensure_profile_mount "$profile"
+    ;;
   setup)
     start_model_server
     ensure_profile_mount "$profile" || exit 2
