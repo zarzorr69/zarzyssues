@@ -12120,12 +12120,219 @@ PY_CB_PROGRESS_V10_2
     "$py" "$helper_file" "$mode" --project "$PROJECT_DIR"
 }
 
+# V11.6: after a verified Ollama Cookbook download, make that model discoverable
+# in the Odysseus picker without starting SGLang/vLLM per model.
+cookbook_autoadd_v11_6() {
+    local action="${1:-install}" helper_file="$PROJECT_DIR/data/local/zarzysseus_cookbook_autoadd_v11_6.py" py="$VENV_PY"
+    [[ -x "$py" ]] || py=python3
+    mkdir -p "$(dirname -- "$helper_file")"
+    cat > "$helper_file" <<'PY_COOKBOOK_AUTOADD_V11_6'
+#!/usr/bin/env python3
+"""Guarded V11.6 Cookbook Ollama download -> model picker refresh.
+
+Does not download, serve, or switch models. Only reconciles completed,
+local Ollama downloads that the Odysseus server can verify.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import tempfile
+
+MARKER = "ZARZYSSEUS_COOKBOOK_OLLAMA_AUTOADD_V11_6"
+TARGET = "static/js/cookbookRunning.js"
+MANIFEST = "data/local/patch-backups/cookbook-ollama-autoadd-v11_6.json"
+BACKUP = "data/local/patch-backups/cookbook-ollama-autoadd-v11_6.before.js"
+ANCHOR = """function _updateTask(sessionId, updates) {
+  const tasks = _loadTasks();
+  const task = tasks.find(t => t.sessionId === sessionId);
+  if (task) {
+    Object.assign(task, updates);
+    _saveTasks(tasks);
+  }
+"""
+
+INSERT = r'''// ZARZYSSEUS_COOKBOOK_OLLAMA_AUTOADD_V11_6
+// Only verified Ollama downloads become chat-picker entries. Downloading a
+// generic HF checkpoint does not make it a text-generation model.
+const _zarAutoAddedSessions = new Set();
+async function _zarReconcileOllamaDownload(task) {
+  if (!task || task.type !== 'download' || task.payload?.backend !== 'ollama') return;
+  // The app's /api/runtime describes *its own* endpoint, not an arbitrary SSH
+  // server. Never register a remote model as if it were installed locally.
+  if (task.remoteHost || task.payload?.remote_host) return;
+  const model = String(task.payload?.repo_id || '').trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,180}$/.test(model)) return;
+  const id = String(task.sessionId || '');
+  if (!id || _zarAutoAddedSessions.has(id)) return;
+  _zarAutoAddedSessions.add(id);
+  try {
+    const rr = await fetch('/api/runtime', { credentials: 'same-origin' });
+    if (!rr.ok) throw Error(`Runtime configuration unavailable (${rr.status})`);
+    const runtime = await rr.json();
+    const base = String(runtime?.ollama_base_url || (!runtime?.in_docker ? 'http://127.0.0.1:11434/v1' : '')).trim();
+    if (!base) throw Error('Ollama endpoint is not configured in Odysseus');
+    const parsed = new URL(base);
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw Error('Invalid Ollama endpoint');
+    // The address comes from Odysseus server configuration. The browser never
+    // connects to it; Odysseus's admin-only endpoint test makes the request.
+    const form = new FormData();
+    form.set('base_url', base);
+    form.set('endpoint_kind', 'local');
+    const check = await fetch('/api/model-endpoints/test', {
+      method: 'POST', credentials: 'same-origin', body: form,
+    });
+    if (!check.ok) throw Error(`Ollama verification failed (${check.status})`);
+    const result = await check.json();
+    const found = Array.isArray(result?.models) ? result.models.map(x => String(x).toLowerCase()) : [];
+    const expected = model.toLowerCase();
+    const isFound = found.includes(expected) || (expected.endsWith(':latest')
+      ? found.includes(expected.slice(0, -7)) : found.includes(expected + ':latest'));
+    if (!isFound) throw Error(`Ollama does not list ${model}; download may not be complete`);
+    const fields = new FormData();
+    fields.set('name', 'Ollama (Local)');
+    fields.set('base_url', base);
+    fields.set('model_type', 'llm');
+    fields.set('endpoint_kind', 'local');
+    fields.set('require_models', 'true');
+    // An explicit pin permits the selected model to appear even if a prior
+    // endpoint has an allowlist; the API merges it without clearing old pins.
+    fields.set('pinned_models', JSON.stringify([model]));
+    const added = await fetch('/api/model-endpoints', {
+      method: 'POST', credentials: 'same-origin', body: fields,
+    });
+    if (!added.ok) throw Error(`Could not register Ollama endpoint (${added.status})`);
+    if (window.modelsModule?.refreshModels) {
+      await window.modelsModule.refreshModels(true, { waitForRefresh: true });
+    } else {
+      const refreshed = await fetch('/api/models?refresh=true&wait_refresh=true', { credentials: 'same-origin' });
+      if (!refreshed.ok) throw Error(`Model catalog refresh failed (${refreshed.status})`);
+    }
+    uiModule.showToast(`${model} is available in the model picker; select it when ready.`);
+  } catch (error) {
+    uiModule.showToast(`Ollama download finished, but picker sync needs attention: ${error.message}`, 9000);
+  }
+}
+'''
+
+
+def sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def atomic_write(path: Path, data: bytes) -> None:
+    fd, name = tempfile.mkstemp(prefix='.zar-cookbook-autoadd-', dir=str(path.parent))
+    try:
+        with os.fdopen(fd, 'wb') as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(name, path.stat().st_mode)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def transform(text: str) -> str:
+    if MARKER in text:
+        raise ValueError('Patch marker already present but no manifest; refusing unsafe overwrite')
+    if text.count(ANCHOR) != 1:
+        raise ValueError(f'Cookbook task update layout changed (anchor count {text.count(ANCHOR)}); source unchanged')
+    updated = text.replace(
+        ANCHOR, INSERT + '\n' + ANCHOR.replace('    _saveTasks(tasks);\n',
+           "    _saveTasks(tasks);\n    if (updates.status === 'done') {\n      void _zarReconcileOllamaDownload(task);\n    }\n"), 1
+    )
+    assert updated.count(MARKER) == 1
+    return updated
+
+
+def status(root: Path) -> int:
+    file = root / TARGET
+    manifest = root / MANIFEST
+    if not manifest.is_file():
+        print('Cookbook Ollama auto-add V11.6: not installed')
+        return 2
+    record = json.loads(manifest.read_text())
+    ok = file.exists() and sha(file.read_bytes()) == record['after']
+    print('Cookbook Ollama auto-add V11.6:', 'INSTALLED' if ok else 'CHANGED; review manually')
+    return 0 if ok else 3
+
+
+def install(root: Path) -> int:
+    file = root / TARGET
+    manifest = root / MANIFEST
+    backup = root / BACKUP
+    if manifest.exists():
+        return status(root)
+    if not file.is_file():
+        raise ValueError(f'{file} missing; no changes')
+    before = file.read_bytes()
+    after = transform(before.decode('utf-8')).encode('utf-8')
+    # Never overwrite an existing earlier backup if its contents differ.
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    if backup.exists() and backup.read_bytes() != before:
+        raise ValueError(f'Existing backup differs: {backup}; source unchanged')
+    if not backup.exists():
+        fd, temp = tempfile.mkstemp(dir=str(backup.parent), prefix='.zar-cb-backup-')
+        with os.fdopen(fd, 'wb') as f:
+            f.write(before)
+        os.replace(temp, backup)
+    atomic_write(file, after)
+    record = dict(marker=MARKER, file=TARGET, backup=BACKUP, before=sha(before), after=sha(after))
+    fd, temp = tempfile.mkstemp(dir=str(manifest.parent), prefix='.zar-cb-manifest-')
+    with os.fdopen(fd, 'w') as f:
+        json.dump(record, f, indent=2)
+    os.replace(temp, manifest)
+    print('Cookbook V11.6: verified Ollama downloads now refresh the chat model picker.')
+    print('Only local Ollama models are auto-added; HF files never masquerade as chat servers.')
+    return 0
+
+
+def rollback(root: Path) -> int:
+    file = root / TARGET
+    manifest = root / MANIFEST
+    if not manifest.is_file():
+        raise ValueError('Patch not installed')
+    record = json.loads(manifest.read_text())
+    backup = root / record['backup']
+    if record['marker'] != MARKER or record['file'] != TARGET:
+        raise ValueError('Unexpected manifest; refusing rollback')
+    if sha(file.read_bytes()) != record['after'] or sha(backup.read_bytes()) != record['before']:
+        raise ValueError('Installed file or backup changed; refusing rollback')
+    atomic_write(file, backup.read_bytes())
+    manifest.unlink()
+    print('Cookbook V11.6: original task UI restored')
+    return 0
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('action', choices=('install', 'status', 'rollback'))
+    p.add_argument('--project', type=Path, required=True)
+    a = p.parse_args()
+    try:
+        return {'install': install, 'status': status, 'rollback': rollback}[a.action](a.project)
+    except (ValueError, OSError, KeyError, json.JSONDecodeError) as exc:
+        print(f'Cookbook V11.6: {exc}', file=__import__('sys').stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+PY_COOKBOOK_AUTOADD_V11_6
+    "$py" "$helper_file" "$action" --project "$PROJECT_DIR"
+}
+
 install_cookbook_reliability_fixes() {
     [[ "$ZARZYSSEUS_COOKBOOK_FIXES" == "1" ]] || { echo '    [skipped] Cookbook reliability fixes disabled'; return 0; }
-    info 'Checking Cookbook reliability bridge (no OS update)...'; install_cookbook_hf_retry_bridge || true; patch_cookbook_download_status || true; patch_cookbook_sam_mask_status_probe || true; patch_cookbook_sam_mask_recipe || true; cookbook_oneclick_v10_1 install || echo '    [warning] Cookbook native model routing patch skipped or needs review'; cookbook_progress_v10_2 install || echo '    [warning] Cookbook visual progress patch skipped; check source version'; bump_cookbook_frontend_cache || true
+    info 'Checking Cookbook reliability bridge (no OS update)...'; install_cookbook_hf_retry_bridge || true; patch_cookbook_download_status || true; patch_cookbook_sam_mask_status_probe || true; patch_cookbook_sam_mask_recipe || true; cookbook_oneclick_v10_1 install || echo '    [warning] Cookbook native model routing patch skipped or needs review'; cookbook_progress_v10_2 install || echo '    [warning] Cookbook visual progress patch skipped; check source version'; cookbook_autoadd_v11_6 install || echo '    [warning] Cookbook Ollama auto-add patch skipped; inspect source version'; bump_cookbook_frontend_cache || true
     echo '    [ready] Cookbook repair path uses the Zarzysseus HF cache/retry policy and never invokes the system updater.'
 }
-cookbook_fix_status() { [[ -x "$COOKBOOK_BRIDGE_BIN_DIR/hf" ]] && echo 'Cookbook HF retry bridge: INSTALLED' || echo 'Cookbook HF retry bridge: not installed'; if [[ -f "$PROJECT_DIR/routes/cookbook_routes.py" ]] && grep -Fq 'ZARZYSSEUS_COOKBOOK_DOWNLOAD_STATUS_V1' "$PROJECT_DIR/routes/cookbook_routes.py"; then echo 'Cookbook DOWNLOAD_OK status guard: INSTALLED'; else echo 'Cookbook DOWNLOAD_OK status guard: upstream-fixed / not installed'; fi; echo 'Cookbook repair path: NO full OS update'; cookbook_oneclick_v10_1 status || true; cookbook_progress_v10_2 status || true; }
+cookbook_fix_status() { [[ -x "$COOKBOOK_BRIDGE_BIN_DIR/hf" ]] && echo 'Cookbook HF retry bridge: INSTALLED' || echo 'Cookbook HF retry bridge: not installed'; if [[ -f "$PROJECT_DIR/routes/cookbook_routes.py" ]] && grep -Fq 'ZARZYSSEUS_COOKBOOK_DOWNLOAD_STATUS_V1' "$PROJECT_DIR/routes/cookbook_routes.py"; then echo 'Cookbook DOWNLOAD_OK status guard: INSTALLED'; else echo 'Cookbook DOWNLOAD_OK status guard: upstream-fixed / not installed'; fi; echo 'Cookbook repair path: NO full OS update'; cookbook_oneclick_v10_1 status || true; cookbook_progress_v10_2 status || true; cookbook_autoadd_v11_6 status || true; }
 
 patch_cookbook_sam_mask_status_probe() {
     [[ "$PATCH_COOKBOOK_SAM_MASK_RECIPE" == "1" ]] || return 0
@@ -17586,8 +17793,10 @@ case "$ACTION" in
             rollback-oneclick) cookbook_oneclick_v10_1 rollback ;;
             progress) cookbook_progress_v10_2 install && bump_cookbook_frontend_cache ;;
             rollback-progress) cookbook_progress_v10_2 rollback && bump_cookbook_frontend_cache ;;
+            autoadd) cookbook_autoadd_v11_6 install && bump_cookbook_frontend_cache ;;
+            rollback-autoadd) cookbook_autoadd_v11_6 rollback && bump_cookbook_frontend_cache ;;
             '') install_cookbook_reliability_fixes ;;
-            *) echo 'Usage: cookbook-fix [status|progress|rollback-progress|rollback-oneclick]'; exit 2 ;;
+            *) echo 'Usage: cookbook-fix [status|progress|rollback-progress|rollback-oneclick|autoadd|rollback-autoadd]'; exit 2 ;;
         esac
         if [[ "${2:-}" != status ]] && service_installed && service_systemctl is-active --quiet "$service_unit" 2>/dev/null; then service_systemctl daemon-reload; service_systemctl restart "$service_unit"; echo 'Zarzysseus restarted with Cookbook reliability fixes.'; fi
         ;;
@@ -18284,7 +18493,7 @@ Environment overrides:
   SYSTEM_AUTO_UPDATE (default: persisted, initially 1)  Full OS update before committed install/update; TUI-toggleable
   SYSTEM_AUTO_UPDATE_FILE                    Persistent toggle file under ~/.config/zarzysseus
   ZARZYSSEUS_CHAT_CONTINUITY_GUARD (default: 1) Prevent immediate new-session housekeeping deletion
-  ZARZYSSEUS_COOKBOOK_FIXES (default: 1)     Cookbook retry/status compatibility bridge; no OS update
+  ZARZYSSEUS_COOKBOOK_FIXES (default: 1)     Cookbook retry/status + Ollama auto-add; no OS update
   SYSTEM_UPDATE_TTL (default: 21600)       Cache window for install/update-triggered system upgrades
   SYSTEM_UPDATE_FORCE (default: 0)         Force an update even when the TTL stamp is fresh
   SYSTEM_UPDATE_STRICT (default: 1)        Stop before project changes if the OS update fails

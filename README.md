@@ -28,6 +28,8 @@ Want the menus rather than commands? Start with the **[step-by-step TUI walkthro
 | 🪟 **[Windows Native: curl](#start-on-windows-with-curlexe-one-line)** | 🐳 **[Windows Docker: curl](#docker-on-windows-powershell-curlexe-one-liner)** |
 | 🤗 **[Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows)** | [Browse the TUI walkthroughs](#guided-walkthroughs-use-the-tui-first) |
 
+**✨ [New: Download Ollama models straight into Chat](#v116--download-a-model-and-use-it-in-chat-ollama-fast-path)** — no per-model SGLang launch.
+
 ### 🛠️ Find a fix fast
 
 | Application & models | Agents & integrations |
@@ -901,6 +903,21 @@ bash /DATA/zarzysseus-unified/zarzysseus.sh docker-kit-sync apply  # review firs
 
 Your `.env`, credentials, existing models, workspaces, and named Docker volumes stay in place. **A successful TUI/install simulation isn't proof that every model works on every CPU.** Verify services and Ollama models after applying a kit update.
 
+## V11.6 — Download a model and use it in Chat (Ollama fast path)
+
+**For supported Ollama models, you no longer need to launch an individual SGLang or vLLM server.** Ollama runs as one background service and loads the selected model when you chat.
+
+1. Make sure Ollama is running and reachable from Odysseus. On Linux Native, use **Ollama Management** in the Zarzysseus TUI. In Docker CPU mode, Ollama runs as the `cpu-ollama` service.
+2. In Odysseus, open **Cookbook → Download**, choose a model **with an actual Ollama backend / Ollama ID** and click **Download**.
+3. Let the download finish. V11.6 checks the live Ollama model inventory, adds or updates the Ollama endpoint in Odysseus, and refreshes the model picker. It **does not** change your current chat model.
+4. Open the model picker and select the new model. Your first message may take longer while Ollama loads its weights into RAM or VRAM.
+
+### Native Linux repair install / diagnosis
+
+From the updated Zarzysseus launcher, run `bash ./zarzysseus.sh cookbook-fix autoadd`. This safely patches only the verified Cookbook task lifecycle, backs it up, and restarts the Odysseus user service when appropriate. Check with `bash ./zarzysseus.sh cookbook-fix status`. Undo with `bash ./zarzysseus.sh cookbook-fix rollback-autoadd`.
+
+**Important distinction:** A Hugging Face download to the HF cache is *not* the same as an Ollama model pull. Arbitrary Transformers checkpoints, speech encoders, image classifiers such as `google/tipsv2-g14`, and non-chat models **will not** be automatically added as chat-ready models. Those require task-specific inference support or a separately verified import into Ollama; installing SGLang is not necessary for compatible Ollama registry models. Native Windows has the matching `cookbook-fix autoadd`/rollback commands, but the PowerShell integration has not been run on a Windows host. Live Docker parity also remains pending.
+
 ## V11.1 — Two independent switches: deployment + hardware
 
 Zarzysseus now has **two independent persisted settings on Linux**:
@@ -1769,6 +1786,12 @@ The Windows edition now **installs Docker Desktop during committed app installat
 A model's final answer alone is not proof. In Agent Mode, explicitly request an available tool (for example, `Call get_workspace now`) and inspect the Odysseus tool-execution UI/logs for a native tool call and its result. An endpoint flag of `True` and `native_tools=True` only mean the model was **offered** schemas; a valid direct Ollama call does not guarantee that the full Agent request invokes one. Tool approval and security rules still apply.
 
 ## Changelog
+
+### V11.6 — Cookbook Ollama auto-add
+
+- Successful **local Ollama** downloads are verified and reflected in Odysseus's model picker without per-model SGLang/vLLM startup.
+- Guarded reversible patch; no silent chat-model switching and no fake availability for HF-only checkpoints.
+- ZimaOS/Desktop native or container runtime must have a reachable, configured Ollama endpoint.
 
 A quick history of Zarzysseus releases. **Documentation update:** startup commands now live under Quick links, and release history is grouped here. No runtime version was changed by this documentation-only update. For setup steps, use the [guided TUI walkthroughs](#guided-walkthroughs-use-the-tui-first); for platform limits and verification status, follow the linked feature documentation. A feature being documented does not mean it has been live-tested on every operating system or backend. The README also includes a Windows PowerShell `curl.exe` quick start for the native Windows TUI.
 

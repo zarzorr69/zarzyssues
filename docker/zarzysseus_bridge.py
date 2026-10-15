@@ -18,7 +18,7 @@ import zarzysseus_overlay as overlay
 
 COMMIT = 'v11-bundled'
 # Updated at release packaging from the exact read-only toolkit bind-mount.
-SCRIPT_SHA256 = 'ab25143ee45e66047431bde01024f9e3f2a6b9d64744425b87f6e04687747303'
+SCRIPT_SHA256 = '23bd707f0e21327c5e8c2a22f507b568d6346f8f07d62d29075d8579ec6e3b63'
 BUNDLED_TOOLKIT = Path('/cpu-kit/zarzysseus.sh')
 CURRENT_NATIVE_RETURN = '''        return [schema for schema in schemas or ()
                 if schema.get("function", {}).get("name", schema.get("name")) not in _caller_hard_denials
