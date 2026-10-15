@@ -28,6 +28,26 @@ bash "$HOME/.local/share/zarzysseus/zarzysseus.sh"
 
 This uses the repository's current `main` branch. Read the [installation and safety notes](#linux-installation) if you prefer to inspect the files first or already have a customized copy. **Termux itself is not a supported Linux installation target**; run Zarzysseus on an actual Linux machine or server.
 
+### Start on Windows with curl.exe (one line)
+
+Open **Windows PowerShell** (Windows 10/11, PowerShell 5.1 or later) and paste this single line:
+
+```powershell
+$d=Join-Path $env:LOCALAPPDATA 'Zarzysseus'; New-Item -ItemType Directory -Force -Path $d | Out-Null; $f=Join-Path $d 'zarzysseus.ps1'; curl.exe -fL --retry 3 'https://raw.githubusercontent.com/zarzorr69/zarzyssues/main/zarzysseus.ps1' -o $f; if ($LASTEXITCODE -ne 0) { throw 'Download failed.' }; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $f
+```
+
+This saves the **native Windows installer** to `%LOCALAPPDATA%\Zarzysseus\zarzysseus.ps1` and opens its **numbered interactive menu**. It is a Windows-native launcher; the Linux Native/Docker and CPU-only/Full switches do not apply to this edition.
+
+**Next:** Select the installation option in the TUI, review its prompts, and install only the components you want. Downloading and opening the menu does not automatically install Odysseus.
+
+To **reopen the Windows TUI** later without downloading again:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Zarzysseus\zarzysseus.ps1"
+```
+
+The `-ExecutionPolicy Bypass` flag applies to that PowerShell process only. Because this downloads and runs code from the repository's live `main` branch, [inspect the script on GitHub](https://github.com/zarzorr69/zarzyssues/blob/main/zarzysseus.ps1) if you prefer to review it first. See the [Windows walkthrough](#windows-guided-menu-map-and-feature-paths) for the exact menu steps.
+
 ### 🗺️ Jump to a guide
 
 Want the menus rather than commands? Start with the **[step-by-step TUI walkthroughs](#guided-walkthroughs-use-the-tui-first)**. If something fails, go straight to the **[troubleshooting guide](#quick-start-and-troubleshooting)**.
@@ -40,7 +60,7 @@ Want the menus rather than commands? Start with the **[step-by-step TUI walkthro
 | Installation | First-time setup |
 | :--- | :--- |
 | 🐧 **[Linux: install and open the TUI](#linux-installation)** | ✅ **[First-run checklist](#first-run-checklist)** |
-| 🪟 **[Windows installation](#windows-installation)** | 🤗 **[Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows)** |
+| 🪟 **[Windows: curl quick start](#start-on-windows-with-curlexe-one-line)** | 🤗 **[Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows)** |
 
 ### 🛠️ Find a fix fast
 
@@ -93,7 +113,7 @@ Want the menus rather than commands? Start with the **[step-by-step TUI walkthro
 
 ## Getting started in three steps
 
-1. **Open the menu.** Use the [Linux curl one-liner](#start-on-linux-with-curl-one-line) above, or follow [Windows installation](#windows-installation).
+1. **Open the menu.** Use the [Linux curl one-liner](#start-on-linux-with-curl-one-line) or [Windows curl.exe one-liner](#start-on-windows-with-curlexe-one-line), then follow the on-screen menu.
 2. **Choose where Odysseus will run.** On Linux, select **Native** for a regular desktop install or **Docker** for a containerized server. Next, choose **CPU-only** for systems without a supported GPU or **Full** if you want the available GPU/runtime options. This is a preference, not an immediate install.
 3. **Install, start, and open Odysseus.** Follow **Install / Update**, then **Service Management → Start/Status**. Open the address shown by your installation. A native default is `http://127.0.0.1:7000`; Docker addresses/ports come from the Compose configuration.
 
@@ -116,7 +136,7 @@ If you have an existing ZimaOS CPU kit, **reuse it** rather than starting a seco
 
 | Linux (including Arch/CachyOS, Ubuntu and other supported distributions) | Windows PowerShell |
 | --- | --- |
-| Run the [full-project curl one-liner](#start-on-linux-with-curl-one-line). Later use `bash "$HOME/.local/share/zarzysseus/zarzysseus.sh"` to reopen the menu. | [Download `zarzysseus.ps1`](#windows-installation), then open PowerShell in its folder and run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1`. |
+| Run the [full-project curl one-liner](#start-on-linux-with-curl-one-line). Later use `bash "$HOME/.local/share/zarzysseus/zarzysseus.sh"` to reopen the menu. | Use the [Windows curl.exe one-liner](#start-on-windows-with-curlexe-one-line). Later, reopen the saved script from `%LOCALAPPDATA%\Zarzysseus`. |
 | Use **↑ / ↓** or **j / k**, **Enter** to select, and **q / Esc** to go back. | Menus are numbered: enter the **number** at `Choose` and press **Enter**. The model picker has its own keyboard controls. |
 | On short terminals, menus scroll. Enlarging the terminal makes names easier to read. | Keep PowerShell open while a setup action is running; approve Windows/WinGet prompts when you intentionally requested them. |
 
@@ -1148,6 +1168,8 @@ The choice is stored under `~/.config/zarzysseus/system-auto-update` and survive
 
 ## Windows installation
 
+**Fastest way:** use the [Windows `curl.exe` one-liner](#start-on-windows-with-curlexe-one-line) in Quick Links. It downloads the installer to a persistent folder and opens the TUI. You can also use the two-step method below if you want to inspect the file before executing it.
+
 Use **Windows PowerShell 5.1 or later** on Windows 10/11. Paste the following into PowerShell; the script downloads to a file before execution, preserving keyboard input for its menu:
 
 ```powershell
@@ -1535,7 +1557,7 @@ A model's final answer alone is not proof. In Agent Mode, explicitly request an 
 
 ## Changelog
 
-A quick history of Zarzysseus releases. **Documentation update:** the README now opens with a full-project curl quick start, beginner-friendly Native/Docker setup paths, and TUI-first guidance. No runtime version was changed by this documentation-only update. For setup steps, use the [guided TUI walkthroughs](#guided-walkthroughs-use-the-tui-first); for platform limits and verification status, follow the linked feature documentation. A feature being documented does not mean it has been live-tested on every operating system or backend.
+A quick history of Zarzysseus releases. **Documentation update:** the README now opens with a full-project curl quick start, beginner-friendly Native/Docker setup paths, and TUI-first guidance. No runtime version was changed by this documentation-only update. For setup steps, use the [guided TUI walkthroughs](#guided-walkthroughs-use-the-tui-first); for platform limits and verification status, follow the linked feature documentation. A feature being documented does not mean it has been live-tested on every operating system or backend. The README also includes a Windows PowerShell `curl.exe` quick start for the native Windows TUI.
 
 | Version | Highlights | Details |
 | :--- | :--- | :--- |
