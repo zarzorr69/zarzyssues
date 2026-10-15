@@ -4,6 +4,69 @@ An interactive AI installation and service-management toolkit for **Odysseus nat
 
 Zarzysseus is a separate installer and management TUI for the upstream [Odysseus project](https://github.com/odysseus-dev/odysseus). It helps discover an existing checkout, install the native application, browse models, install skills, and repair supported dependencies. **Linux now offers Native and Docker management modes; Windows retains its native TUI. Feature parity is scoped and tested individually**; see [Windows support](#windows-support) below.
 
+## 🧭 Quick links
+
+**New here?** Follow the **[guided TUI walkthroughs](#guided-walkthroughs-use-the-tui-first)** first — menu paths, what to select, what happens next, and how to verify success. Prefer the interactive menus; shell commands later in this README are optional diagnostics and advanced shortcuts. **Something broken?** Jump to the [troubleshooting guide](#quick-start-and-troubleshooting).
+
+### 🚀 Install & get running
+
+> **📖 [Start here: illustrated TUI walkthroughs for every main feature →](#guided-walkthroughs-use-the-tui-first)**
+
+
+| Installation | First-time setup |
+| :--- | :--- |
+| 🐧 **[Linux: Native or Docker mode](#v11-one-launcher-native-and-docker-modes)** | ✅ **[First-run checklist](#first-run-checklist)** |
+| 🪟 **[Windows installation](#windows-installation)** | 🤗 **[Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows)** |
+
+### 🛠️ Find a fix fast
+
+| Application & models | Agents & integrations |
+| :--- | :--- |
+| 🚫 [App or web UI won't open](#app-or-web-ui-wont-open) | 🌐 [Browser or screenshots aren't working](#browser-tools-or-screenshots-arent-working) |
+| 🦙 [Ollama or models missing](#ollama-or-a-model-is-missing) | 🧩 [Skills or MCP tools missing](#skills-or-mcp-tools-arent-available) |
+| 🐳 [Docker / ChromaDB problems](#docker-or-chromadb-isnt-ready) | 💬 [Agent follow-ups lose context](#follow-ups-lose-their-context) |
+| 🪟 [Windows setup hurdles](#windows-specific-setup-hurdles) | 🔑 [Hugging Face model / access problems](#recommended-first-time-setup-hugging-face-linux-and-windows) |
+
+**🍳 [Cookbook: one-click Download/Run shows missing GGUF source](#cookbook-one-click-download-and-runtime-routing)**
+
+**📊 [Cookbook: progress bar, status updates and Show logs](#cookbook-clean-live-download-progress-v102)**
+
+**🩺 [Full troubleshooting guide →](#quick-start-and-troubleshooting)** — diagnostics first, repairs only when needed.
+
+<details>
+<summary><strong>⚙️ Configuration & integrations</strong> — networking, Docker, skills, MCP, models and more</summary>
+
+| System & environment | Agent & skills |
+| :--- | :--- |
+| [Network access & security](#network-discoverability-and-security-linux-and-windows) | [MCP & FreeMCP](#mcp-runtime-built-ins-and-freemcp) |
+| [Docker & ChromaDB](#docker-and-chromadb-setup-linux-and-windows) | [V9 Skills & MCP Manager](#v9-unified-skill-installation-mcp-consent-and-tool-health) |
+| [Linux OS-update toggle](#linux-full-os-update-toggle) | [V10 Skill-Aware Model Advisor](#v10-skill-aware-model-advisor-and-hardware-auto-fit) |
+| [Linux distribution support](#linux-distribution-support) | [Skill-declared MCP setup](#skill-declared-mcp-servers) |
+| [Windows support](#windows-support) | [Executable skills & tool routing](#executable-skills-and-native-tool-routing) |
+| [Ollama vs Hugging Face IDs](#ollama-vs-hugging-face-model-ids) | [Tool-call JSON recovery](#local-model-json-tool-call-recovery) |
+| | [Same-chat continuity & Cookbook](#same-chat-continuity-and-cookbook-reliability) |
+
+</details>
+
+<details>
+<summary><strong>🔬 Advanced diagnostics</strong> — repair commands, tool execution and requirements</summary>
+
+| Diagnose & repair | Validate |
+| :--- | :--- |
+| [Agent reliability & browser repairs](#agent-reliability-repair-and-diagnostics-linux-and-windows) | [Verify tool execution](#confirm-a-tool-was-actually-executed) |
+| [Odysseus integration diagnostics](#odysseus-integration-fixes-and-diagnostics) | [System requirements](#requirements) |
+| [Linux repair commands](#linux-repair-and-verify) | [Windows repair commands](#windows-repair-and-verify) |
+
+</details>
+
+### 📜 Releases & changelog
+
+| Latest release | Previous milestones |
+| :--- | :--- |
+| 🆕 **[V11.1 — Native/Docker × CPU-only/Full](#v111--two-independent-switches-deployment--hardware)** | 🐳 [V11 — Unified Native/Docker launcher](#v11-one-launcher-native-and-docker-modes) |
+| 📖 **[Read the complete changelog →](#changelog)** | 🛠️ [Cookbook V10.2.1 progress hotfix](#v1021--cookbook-progress-compatibility-hotfix) |
+
+
 ## V11.1 — Two independent switches: deployment + hardware
 
 Zarzysseus now has **two independent persisted settings on Linux**:
@@ -173,61 +236,6 @@ The earlier native SGLang environment contained a mismatched CUDA `sgl_kernel` w
 
 V11 has offline tests for the mode selector, persisted mode changes, CLI routing, menu category parity, dry-run/approved Docker kit sync, byte-preserved `.env`, checksum-verified bundled bridge, CPU model payload adapter, container source-guarded replay, and CLI argument handling. **Docker could not be launched in the build environment**, so installing and serving a real model on your ZimaOS server must still be verified. The CPU kit's *newer* Odysseus dispatch rejected portions of the legacy V3–V8 browser recovery chain; the bridge keeps those repairs optional and does not claim identical screenshot behavior until live tests pass.
 
-
-## 🧭 Quick links
-
-**New here?** Follow the **[guided TUI walkthroughs](#guided-walkthroughs-use-the-tui-first)** first — menu paths, what to select, what happens next, and how to verify success. Prefer the interactive menus; shell commands later in this README are optional diagnostics and advanced shortcuts. **Something broken?** Jump to the [troubleshooting guide](#quick-start-and-troubleshooting).
-
-### 🚀 Install & get running
-
-> **📖 [Start here: illustrated TUI walkthroughs for every main feature →](#guided-walkthroughs-use-the-tui-first)**
-
-
-| Installation | First-time setup |
-| :--- | :--- |
-| 🐧 **[Linux: Native or Docker mode](#v11-one-launcher-native-and-docker-modes)** | ✅ **[First-run checklist](#first-run-checklist)** |
-| 🪟 **[Windows installation](#windows-installation)** | 🤗 **[Hugging Face setup](#recommended-first-time-setup-hugging-face-linux-and-windows)** |
-
-### 🛠️ Find a fix fast
-
-| Application & models | Agents & integrations |
-| :--- | :--- |
-| 🚫 [App or web UI won't open](#app-or-web-ui-wont-open) | 🌐 [Browser or screenshots aren't working](#browser-tools-or-screenshots-arent-working) |
-| 🦙 [Ollama or models missing](#ollama-or-a-model-is-missing) | 🧩 [Skills or MCP tools missing](#skills-or-mcp-tools-arent-available) |
-| 🐳 [Docker / ChromaDB problems](#docker-or-chromadb-isnt-ready) | 💬 [Agent follow-ups lose context](#follow-ups-lose-their-context) |
-| 🪟 [Windows setup hurdles](#windows-specific-setup-hurdles) | 🔑 [Hugging Face model / access problems](#recommended-first-time-setup-hugging-face-linux-and-windows) |
-
-**🍳 [Cookbook: one-click Download/Run shows missing GGUF source](#cookbook-one-click-download-and-runtime-routing)**
-
-**📊 [Cookbook: progress bar, status updates and Show logs](#cookbook-clean-live-download-progress-v102)**
-
-**🩺 [Full troubleshooting guide →](#quick-start-and-troubleshooting)** — diagnostics first, repairs only when needed.
-
-<details>
-<summary><strong>⚙️ Configuration & integrations</strong> — networking, Docker, skills, MCP, models and more</summary>
-
-| System & environment | Agent & skills |
-| :--- | :--- |
-| [Network access & security](#network-discoverability-and-security-linux-and-windows) | [MCP & FreeMCP](#mcp-runtime-built-ins-and-freemcp) |
-| [Docker & ChromaDB](#docker-and-chromadb-setup-linux-and-windows) | [V9 Skills & MCP Manager](#v9-unified-skill-installation-mcp-consent-and-tool-health) |
-| [Linux OS-update toggle](#linux-full-os-update-toggle) | [V10 Skill-Aware Model Advisor](#v10-skill-aware-model-advisor-and-hardware-auto-fit) |
-| [Linux distribution support](#linux-distribution-support) | [Skill-declared MCP setup](#skill-declared-mcp-servers) |
-| [Windows support](#windows-support) | [Executable skills & tool routing](#executable-skills-and-native-tool-routing) |
-| [Ollama vs Hugging Face IDs](#ollama-vs-hugging-face-model-ids) | [Tool-call JSON recovery](#local-model-json-tool-call-recovery) |
-| | [Same-chat continuity & Cookbook](#same-chat-continuity-and-cookbook-reliability) |
-
-</details>
-
-<details>
-<summary><strong>🔬 Advanced diagnostics</strong> — repair commands, tool execution and requirements</summary>
-
-| Diagnose & repair | Validate |
-| :--- | :--- |
-| [Agent reliability & browser repairs](#agent-reliability-repair-and-diagnostics-linux-and-windows) | [Verify tool execution](#confirm-a-tool-was-actually-executed) |
-| [Odysseus integration diagnostics](#odysseus-integration-fixes-and-diagnostics) | [System requirements](#requirements) |
-| [Linux repair commands](#linux-repair-and-verify) | [Windows repair commands](#windows-repair-and-verify) |
-
-</details>
 
 ## Guided walkthroughs: use the TUI first
 
@@ -1449,6 +1457,25 @@ The Windows edition now **installs Docker Desktop during committed app installat
 ### Confirm a tool was actually executed
 
 A model's final answer alone is not proof. In Agent Mode, explicitly request an available tool (for example, `Call get_workspace now`) and inspect the Odysseus tool-execution UI/logs for a native tool call and its result. An endpoint flag of `True` and `native_tools=True` only mean the model was **offered** schemas; a valid direct Ollama call does not guarantee that the full Agent request invokes one. Tool approval and security rules still apply.
+
+## Changelog
+
+A quick history of Zarzysseus releases. For setup steps, use the [guided TUI walkthroughs](#guided-walkthroughs-use-the-tui-first); for platform limits and verification status, follow the linked feature documentation. A feature being documented does not mean it has been live-tested on every operating system or backend.
+
+| Version | Highlights | Details |
+| :--- | :--- | :--- |
+| **V11.1** · Current | Independent **Native/Docker** deployment and **CPU-only/Full** hardware profiles on Linux; optional Docker RDNA3 inference controls with DNS, health, and generation checks. | [Deployment and hardware profiles](#v111--two-independent-switches-deployment--hardware) |
+| **V11** | Unified Linux mode selector and separate native/container menus; bundled ZimaOS CPU stack; preview-and-approve kit synchronization with backups. | [Unified launcher](#v11-one-launcher-native-and-docker-modes) |
+| **V10.2.1** | More robust, source-guarded Cookbook progress repair for changed upstream JavaScript formatting. | [Progress compatibility hotfix](#v1021--cookbook-progress-compatibility-hotfix) |
+| **V10.2** | Cleaner Cookbook progress indicator, continuing status polling, and collapsible download logs. | [Live progress](#cookbook-clean-live-download-progress-v102) |
+| **V10.1** | One-click Cookbook source selection and guarded native/GGUF routing repair; task-specific runtime limitations remain. | [Download and runtime routing](#cookbook-one-click-download-and-runtime-routing) |
+| **V10** | Skill-Aware Model Advisor: model recommendations by hardware, installed Ollama inventory, skill needs, and optional tool-call checks. | [Model Advisor](#v10-skill-aware-model-advisor-and-hardware-auto-fit) |
+| **V9** | Skill/MCP health checks, declaration-bound approval, dependency provisioning, and tool-name binding. | [Unified Skills Manager](#v9-unified-skill-installation-mcp-consent-and-tool-health) |
+| **V8** | Schema-safe browser screenshots after approved navigation. | [Screenshot compatibility](#v8-screenshot-parameter-schema-compatibility) |
+| **V7** | Fix for website URLs being mistaken for local workspace paths, hiding browser MCP tools. | [Browser URL routing](#v7-url-mistaken-for-a-local-workspace-path) |
+| **V3–V6** | Iterative Agent reliability improvements for reasoning-only tool responses, compact browser proposals, approved navigation continuation, and screenshot dispatch. | [Agent patch history](#how-the-agent-repairs-fit-together) |
+
+**Compatibility note:** Docker and native installations share menu categories, but they do not have identical host-level capabilities. The Windows edition retains its native PowerShell workflow. Test real model execution, not just a successful download or server import, before treating a backend as ready.
 
 ## Requirements
 
