@@ -33,7 +33,7 @@ Want the menus rather than commands? Start with the **[step-by-step TUI walkthro
 | Application & models | Agents & integrations |
 | :--- | :--- |
 | 🚫 [App or web UI won't open](#app-or-web-ui-wont-open) | 🌐 [Browser or screenshots aren't working](#browser-tools-or-screenshots-arent-working) |
-| 🦙 [Ollama or models missing](#ollama-or-a-model-is-missing) | 🧩 [Skills or MCP tools missing](#skills-or-mcp-tools-arent-available) |
+| 🦙 [Ollama or models missing](#docker-model-visibility-and-account-recovery-v115) | 🧩 [Skills or MCP tools missing](#skills-or-mcp-tools-arent-available) |
 | 🐳 [Docker / ChromaDB problems](#docker-or-chromadb-isnt-ready) | 💬 [Agent follow-ups lose context](#follow-ups-lose-their-context) |
 | 🪟 [Windows setup hurdles](#windows-specific-setup-hurdles) | 🔑 [Hugging Face model / access problems](#recommended-first-time-setup-hugging-face-linux-and-windows) |
 
@@ -217,6 +217,33 @@ The preview does not modify the kit. Applying sync can replace kit **source file
 
 > **Safety:** All quick starts use the repository's current `main` branch. [Review the source](https://github.com/zarzorr69/zarzyssues) if you prefer before executing it. Docker tools may need permission to access the daemon, but **do not run the entire Zarzysseus TUI with `sudo`**. Termux can be used as an SSH client for ZimaOS, not as a supported Docker host for this project.
 
+
+## Docker model visibility and account recovery (V11.5)
+
+If **Odysseus shows no models**, it does not necessarily mean your downloaded Ollama weights have disappeared. In the Docker TUI, open **Model Manager / Hardware Fit → Model visibility doctor**. This is read-only and checks three things independently:
+
+1. **What the Ollama container has installed.** If this list is empty, go to **Ollama Management → Install Qwen3.5 CPU quality profile** (or another compatible model) and approve the download.
+2. **Whether the Odysseus container can query the Ollama API.** Its internal address should be `http://cpu-ollama:11434`. The server's published port `11435` and `localhost` are not the correct address *inside* Odysseus's container.
+3. **The Odysseus web model picker.** If the API lists models but the picker is empty, sign in and check/refresh the **Ollama provider**, selected endpoint, and any hidden/pinned model filters. Don't delete Ollama volumes or reset saved provider settings just to make the list refresh.
+
+Read-only Linux/ZimaOS CLI shortcut from the extracted repository:
+
+```bash
+bash ./zarzysseus.sh docker model-doctor
+```
+
+On Windows Docker Desktop use **Model Manager / Hardware Fit → Diagnose model visibility**, or `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\zarzysseus.ps1 docker model-doctor` from the release folder.
+
+**Account setup says `admin_preseed.py` is missing?** You are using an *older existing Docker CPU kit* with a newer launcher. The updated TUI now displays the required **kit-sync preview** and can offer an explicit `SYNC` confirmation before upgrading the older kit. Sync preserves `.env`, previously downloaded model volumes, and user accounts, while backing up any kit files it updates. To do the same manually from the release folder:
+
+```bash
+bash ./zarzysseus.sh docker-kit-sync
+bash ./zarzysseus.sh docker-kit-sync apply
+```
+
+Review the preview before applying; enter `SYNC` when requested. **If Odysseus already has an administrator, this wizard will not overwrite or reset its password.** Log into the existing account and use Odysseus's authenticated account settings to update credentials.
+
+**Browser address reminder:** binding Docker to `0.0.0.0:7012` is fine for a trusted network, but the **allowed origin** must be an actual address people visit, such as `http://192.168.1.156:7012` or your configured HTTPS proxy. `http://o.o.o.o:7012` (letters `o`) is an input typo. The Network menu now rejects that value. Keep authentication on and avoid exposing this port publicly.
 
 ## V11.4 — Docker install, network and first-run account setup
 
@@ -1747,7 +1774,8 @@ A quick history of Zarzysseus releases. **Documentation update:** startup comman
 
 | Version | Highlights | Details |
 | :--- | :--- | :--- |
-| **V11.4** · Current | Detailed Docker installation, interactive network binding, guarded first-run account setup and native-style responsive Docker TUI. | [V11.4 Docker walkthrough](#v114--docker-install-network-and-first-run-account-setup) |
+| **V11.5** · Current | Read-only model visibility diagnostics, approval-based recovery of missing first-run admin helpers, and allowed-origin typo protection. | [Docker recovery guide](#docker-model-visibility-and-account-recovery-v115) |
+| **V11.4** | Detailed Docker installation, network binding, first-run account setup, and responsive Docker TUI. | [V11.4 Docker walkthrough](#v114--docker-install-network-and-first-run-account-setup) |
 | **V11.3** | Windows Docker controller, Native/Docker mode selection, and matched container-tool categories. | [Windows Docker guide](#docker-on-windows-powershell-curlexe-one-liner) |
 | **V11.2** | Fixed Docker install confirmation and added the full-screen Docker menu; Native/Full RDNA3 doctor. | [ZimaOS reliability details](#v112--zimaos-install-and-tui-reliability) |
 | **V11.1** | Independent **Native/Docker** deployment and **CPU-only/Full** hardware profiles on Linux; optional Docker RDNA3 inference controls with DNS, health, and generation checks. | [Deployment and hardware profiles](#v111--two-independent-switches-deployment--hardware) |
@@ -1762,6 +1790,12 @@ A quick history of Zarzysseus releases. **Documentation update:** startup comman
 | **V3–V6** | Iterative Agent reliability improvements for reasoning-only tool responses, compact browser proposals, approved navigation continuation, and screenshot dispatch. | [Agent patch history](#how-the-agent-repairs-fit-together) |
 
 **Compatibility note:** Docker and native installations share menu categories, but they do not have identical host-level capabilities. The Windows edition retains its native PowerShell workflow. Test real model execution, not just a successful download or server import, before treating a backend as ready.
+
+### V11.5 — Docker account recovery and model visibility
+
+- Added a **read-only Ollama visibility doctor** on Linux and Windows Docker, distinguishing installed model weights from Odysseus API reachability and GUI settings.
+- Made account setup offer a **preview plus explicit `SYNC` approval** if the existing Docker kit lacks the supported `admin_preseed.py` mount. Existing auth and named volumes remain protected.
+- Rejected the misleading `http://o.o.o.o:7012` origin typo before writing `.env`.
 
 ### V11.4 — Guided installation and network controls
 

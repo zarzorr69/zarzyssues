@@ -147,6 +147,9 @@ _network_configure() {
         printf 'Browser address should be your LAN/Tailscale IP or HTTPS proxy URL.\n'
         read -r -p "Browser origin [http://$bind:$port]: " origin || return 2
         origin="${origin:-http://$bind:$port}"
+        if [[ "$origin" == 'http://o.o.o.o:'* || "$origin" == 'https://o.o.o.o:'* ]]; then
+            echo 'Looks like letter-o.o.o.o rather than a real server address. Enter your actual LAN/Tailscale IP.' >&2; return 2
+        fi
         if [[ "$bind" == 0.0.0.0 && "$origin" == 'http://0.0.0.0:'* ]]; then
             echo '0.0.0.0 is not a browser address. Enter the server LAN IP or an HTTPS origin.' >&2; return 2
         fi
@@ -179,8 +182,32 @@ _network_apply() {
 # First-run credentials are written by upstream AuthManager in a disposable
 # Compose container, before the Odysseus web service's first boot. Credentials
 # are carried on stdin only; they are never added to .env, CLI args or logs.
+_auth_helper_available() {
+    [[ -f ./admin_preseed.py && ! -L ./admin_preseed.py ]] &&
+      grep -Fq './admin_preseed.py:/cpu-kit/admin_preseed.py:ro' ./compose.yaml
+}
+_auth_prepare_helper() {
+    if _auth_helper_available; then return 0; fi
+    echo '[NEEDS SYNC] Your existing Docker kit lacks the first-admin helper or its Compose mount.' >&2
+    echo 'No account information has been changed.' >&2
+    local launcher="${ZARZYSSEUS_MODE_SWITCH_CMD:-}"
+    if [[ -z "$launcher" || ! -f "$launcher" ]]; then
+        echo 'Open the full Zarzysseus release and run: bash zarzysseus.sh docker-kit-sync' >&2
+        echo 'Then: bash zarzysseus.sh docker-kit-sync apply (confirm SYNC).' >&2
+        return 2
+    fi
+    echo 'Review the non-destructive sync preview before approving any kit changes:' >&2
+    bash "$launcher" docker-kit-sync >&2 || return 2
+    echo 'This sync can update Compose and kit scripts. It backs up replaced files and preserves .env and volumes.' >&2
+    require_confirmation SYNC 'Apply the previewed kit update now? (Backups are kept.)' >&2 || return 2
+    # The outer user confirmation is explicit; the sync command also requires
+    # the keyword on stdin when launched as an interactive child.
+    printf 'SYNC\n' | ZARZYSSEUS_SYNC_CONFIRM=SYNC bash "$launcher" docker-kit-sync apply >&2 || return 2
+    _auth_helper_available || { echo 'Admin helper still missing after sync. No account changes made.' >&2; return 2; }
+    echo '[OK] Admin helper and Compose mount are ready. Existing accounts remain protected.' >&2
+}
 _auth_probe() {
-    [[ -f ./admin_preseed.py ]] || { echo 'Docker kit needs V11.4 admin_preseed.py. Run docker-kit-sync first.' >&2; return 2; }
+    _auth_prepare_helper || return 2
     dc run --rm --no-deps -T --entrypoint python odysseus /cpu-kit/admin_preseed.py status
 }
 _auth_setup() {
@@ -253,6 +280,41 @@ docker_install() {
     dc --profile app ps || :
     echo 'Use Status/Doctor to check readiness; Running alone does not confirm healthy inference.'
     echo 'Use Network menu to change APP_BIND/APP_PORT/APP_ORIGIN without manual editing.'
+}
+
+# Read-only, two-hop visibility test. Avoid changing Odysseus provider settings,
+# which can contain user preferences or credentials. Do not assume an empty GUI
+# picker implies an empty Ollama volume.
+model_doctor() {
+    echo '=== MODEL VISIBILITY / OLLAMA DOCTOR (READ ONLY) ==='
+    echo '[1/3] Models inside this Compose project (cpu-ollama):'
+    if ! dc exec -T cpu-ollama ollama list; then
+        echo '[FAIL] Cannot list the CPU Ollama container. Check: Service Management -> Status.' >&2
+        return 2
+    fi
+    echo '[2/3] Connection from Odysseus container to Ollama /api/tags:'
+    if ! dc exec -T odysseus python -c '
+import json, os, sys, urllib.request, urllib.parse
+raw = os.getenv("OLLAMA_BASE_URL", "http://cpu-ollama:11434").rstrip("/")
+url = raw.removesuffix("/v1") + "/api/tags"
+try:
+    data = json.load(urllib.request.urlopen(urllib.request.Request(url,headers={"Accept":"application/json"}),timeout=8))
+    names = [m.get("name", "") for m in data.get("models", []) if isinstance(m, dict)]
+    print("OLLAMA_API_OK", "models=" + str(len(names)))
+    for name in names[:30]: print("  " + name)
+    if not names: print("No installed models were reported by this Ollama API.")
+except Exception as exc:
+    print("OLLAMA_API_FAILED", type(exc).__name__, str(exc), file=sys.stderr)
+    sys.exit(2)
+'; then
+        echo '[FAIL] Odysseus cannot query Ollama. Verify both services use the same Compose network.' >&2
+        return 2
+    fi
+    echo '[3/3] Odysseus model picker:'
+    echo 'Open the Odysseus UI, sign in, and select/refresh the Ollama model provider.'
+    echo 'The in-container Ollama endpoint is http://cpu-ollama:11434 (NOT localhost or host port 11435).'
+    echo 'If Ollama API models exist but the UI is empty, inspect its saved provider endpoint, hidden/pinned model filters, and refresh the catalog.'
+    echo 'No providers, saved preferences, or credentials have been modified.'
 }
 
 repair_core() {
@@ -420,6 +482,7 @@ dispatch() {
         disable) dc --profile app stop odysseus ;;
         down) dc --profile app down ;;
         models|model-list) dc exec -T cpu-ollama ollama list ;;
+        model-doctor|model-visibility) model_doctor ;;
         ollama-status) dc ps cpu-ollama; dc exec -T cpu-ollama ollama ps ;;
         ollama-start) dc up -d cpu-ollama ;;
         ollama-stop) dc stop cpu-ollama ;;
@@ -451,6 +514,7 @@ Navigation categories mirror the native edition; implementations run in Compose.
   start/stop/restart/status/logs  Manage the Docker Odysseus instance
   model-setup quality|agent|moe  Explicit CPU model download/profile setup
   models / model-list / pull MODEL / warm / benchmark
+  model-doctor             Check installed Ollama models and Odysseus container reachability (read-only)
   model-advisor / skills-doctor / skills-install NAME / skills-setup
   mcp-health / mcp-setup / cookbook-fix status|progress
   doctor / repair / agent-doctor / agent-rollback
@@ -748,13 +812,13 @@ menu() {
                 else
                     submenu 'MODEL RUNTIMES — CPU-ONLY' 'CPU Ollama readiness|ollama-status' 'List CPU Ollama models|models' 'CPU model benchmark|benchmark quality'
                 fi ;;
-            4) submenu 'MODEL MANAGER / HARDWARE FIT' 'Skill-aware model advisor|model-advisor' 'Models in CPU Ollama|models' 'Benchmark quality model|benchmark quality' ;;
-            5) submenu 'OLLAMA MANAGEMENT' 'Install Qwen3.5 CPU quality profile|model-setup quality' 'Install LFM 2.6B agent profile|model-setup agent' 'Warm quality model|warm quality' 'List installed models|models' 'Pull a named model|prompt:pull' 'Stop model backend|ollama-stop' ;;
+            4) submenu 'MODEL MANAGER / HARDWARE FIT' 'Model visibility doctor (container + UI)|model-doctor' 'Skill-aware model advisor|model-advisor' 'Models in CPU Ollama|models' 'Benchmark quality model|benchmark quality' ;;
+            5) submenu 'OLLAMA MANAGEMENT' 'Install Qwen3.5 CPU quality profile|model-setup quality' 'Install LFM 2.6B agent profile|model-setup agent' 'Warm quality model|warm quality' 'List installed models|models' 'Diagnose Odysseus model visibility|model-doctor' 'Pull a named model|prompt:pull' 'Stop model backend|ollama-stop' ;;
             6) unsupported 'macOS MLX-LM on a Linux CPU container' || : ;;
             7) submenu 'HUGGING FACE / MODEL FILES' 'Catalog/model advisor (read only)|model-advisor' 'Why no Hugging Face chat launcher?|info:hf' ;;
             8) submenu 'SKILLS.SH / AGENT SKILLS' 'List installed skills|skills-list' 'Search skill|prompt:skills-search' 'Install selected skill|prompt:skills-install' 'Skills + MCP health|skills-doctor' 'Approve/setup dependencies|skills-setup' 'Skill model advisor|model-advisor' ;;
             9) submenu 'MCP / FREEMCP' 'MCP health|mcp-health' 'MCP setup (may download deps)|mcp-setup' 'Agent diagnostic|agent-doctor' ;;
-            10) submenu 'DIAGNOSTICS / TOOLS / ADVANCED' 'Docker + Agent + skills doctor|doctor' 'Apply guarded Agent repairs|repair' 'Cookbook status|cookbook-fix status' 'Cookbook progress repair (version sensitive)|cookbook-fix progress' 'GPU runtime health|gpu-status' 'Show full help|help' ;;
+            10) submenu 'DIAGNOSTICS / TOOLS / ADVANCED' 'Docker + Agent + skills doctor|doctor' 'Models / Ollama reachability|model-doctor' 'Apply guarded Agent repairs|repair' 'Cookbook status|cookbook-fix status' 'Cookbook progress repair (version sensitive)|cookbook-fix progress' 'GPU runtime health|gpu-status' 'Show full help|help' ;;
             11) submenu 'NETWORK DISCOVERABILITY' 'Show address and CORS origins|network-status' 'Change LAN / Tailscale / localhost binding|network-configure' 'Apply saved network settings (recreate app)|network-apply' 'First-run admin account setup|auth-setup' ;;
             12)
                 if [[ -n "${ZARZYSSEUS_MODE_SWITCH_CMD:-}" ]]; then

@@ -275,6 +275,28 @@ function Install-Stack {
     Show-Status
     Explain 'Running containers are not proof of inference readiness. Use Doctor to verify agents and models.'
 }
+function Show-ModelDoctor {
+    Explain '=== MODEL VISIBILITY / OLLAMA DOCTOR (READ ONLY) ==='
+    Explain '[1/3] Models in Docker Ollama:'
+    Invoke-Compose @('exec','-T','cpu-ollama','ollama','list')
+    Explain '[2/3] Ollama API as seen from Odysseus:'
+    $probe=@'
+import json,os,sys,urllib.request
+url=os.getenv("OLLAMA_BASE_URL","http://cpu-ollama:11434").rstrip("/").removesuffix("/v1") + "/api/tags"
+try:
+    data=json.load(urllib.request.urlopen(url,timeout=8))
+    models=[m.get("name","") for m in data.get("models",[]) if isinstance(m,dict)]
+    print("OLLAMA_API_OK models="+str(len(models)))
+    for model in models[:30]: print("  "+model)
+except Exception as exc:
+    print("OLLAMA_API_FAILED",type(exc).__name__,str(exc),file=sys.stderr)
+    sys.exit(2)
+'@
+    Invoke-Compose @('exec','-T','odysseus','python','-c',$probe)
+    Explain '[3/3] If the GUI is empty, sign in and refresh the Ollama provider/catalog.'
+    Explain 'Docker endpoint: http://cpu-ollama:11434 (not localhost and not the published host port).'
+    Explain 'Check existing provider/hidden/pinned model settings. No data was changed.'
+}
 function Show-Status {
     Explain "Docker hardware profile: $(Get-Profile) (Full is a feature policy, not automatic GPU activation)"
     Explain "Compose kit: $KitDir"
@@ -284,7 +306,7 @@ function Show-Help {
     @'
 Windows Docker: Docker Desktop running Linux containers, with the V11 CPU kit.
 Commands: docker docker-prereq/docker-desktop-install, install/start/stop/restart/status/logs/down, model-setup quality|agent|moe,
-models, ollama-start/stop, pull MODEL, toolkit-install, doctor, repair,
+models, model-doctor, ollama-start/stop, pull MODEL, toolkit-install, doctor, repair,
 agent-doctor, agent-rollback, skills-doctor, skills-setup, mcp-health,
 model-advisor, cookbook-fix status|progress, gpu-status,
 network-status, network-configure, network-apply, auth-setup.
@@ -327,6 +349,7 @@ function Dispatch([string]$What,[string]$Arg='',[string]$ExtraArg='') {
         'ollama-start' { Start-Ollama; break }
         'ollama-stop' { Invoke-Compose @('stop','cpu-ollama'); break }
         'models' { Invoke-Compose @('exec','-T','cpu-ollama','ollama','list'); break }
+        'model-doctor' { Show-ModelDoctor; break }
         'pull' { Require ($Arg -match '^[\w./:-]+$') 'Provide a valid Ollama model ID'; Require (Confirm 'PULL' "Download Ollama model $Arg?") 'Cancelled.'; Start-Ollama; Invoke-Compose @('exec','-T','cpu-ollama','ollama','pull',$Arg); break }
         'model-setup' { Setup-Model $(if($Arg){$Arg}else{'quality'}); break }
         'toolkit-install' { Invoke-Bridge 'install'; break }
@@ -371,7 +394,7 @@ function Show-Menu {
         @{Title='INSTALL / UPDATE';Options=@((New-MenuEntry 'Check Docker Desktop readiness' 'docker-prereq'),(New-MenuEntry 'Install Docker Desktop (approval)' 'docker-desktop-install'),(New-MenuEntry 'Install CPU Docker stack' 'install'),(New-MenuEntry 'Install toolkit helper' 'toolkit-install'),(New-MenuEntry 'Status' 'status'))},
         @{Title='SERVICE MANAGEMENT';Options=@((New-MenuEntry 'Start Odysseus' 'start'),(New-MenuEntry 'Stop services' 'stop'),(New-MenuEntry 'Restart app' 'restart'),(New-MenuEntry 'Status' 'status'),(New-MenuEntry 'Logs' 'logs'),(New-MenuEntry 'Shut down Compose services' 'down'))},
         @{Title='MODEL RUNTIMES';Options=@((New-MenuEntry 'Ollama status' 'status'),(New-MenuEntry 'AMD RDNA3 GPU compatibility note' 'gpu-status'))},
-        @{Title='MODEL MANAGER / HARDWARE FIT';Options=@((New-MenuEntry 'Installed models' 'models'),(New-MenuEntry 'Model advisor' 'model-advisor'))},
+        @{Title='MODEL MANAGER / HARDWARE FIT';Options=@((New-MenuEntry 'Diagnose model visibility' 'model-doctor'),(New-MenuEntry 'Installed models' 'models'),(New-MenuEntry 'Model advisor' 'model-advisor'))},
         @{Title='OLLAMA MANAGEMENT';Options=@((New-MenuEntry 'Install 4B CPU profile' 'model-setup' 'quality'),(New-MenuEntry 'Install 2.6B tool profile' 'model-setup' 'agent'),(New-MenuEntry 'List models' 'models'),(New-MenuEntry 'Start CPU Ollama' 'ollama-start'))},
         @{Title='MLX-LM MANAGEMENT';Options=@((New-MenuEntry 'Not supported in Windows Docker' 'mlx-install'))},
         @{Title='HUGGING FACE / MODEL FILES';Options=@((New-MenuEntry 'Model compatibility advisor' 'model-advisor'))},
