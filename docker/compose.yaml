@@ -75,6 +75,7 @@ services:
       - app-local:/app/.local
       - ./workspace:/workspace
       - ./launch_odysseus.py:/cpu-kit/launch_odysseus.py:ro
+      - ./zarzysseus_ollama_bootstrap.py:/cpu-kit/zarzysseus_ollama_bootstrap.py:ro
       - ./zarzysseus_bridge.py:/cpu-kit/zarzysseus_bridge.py:ro
       - ./admin_preseed.py:/cpu-kit/admin_preseed.py:ro
       - ./toolkit/zarzysseus.sh:/cpu-kit/zarzysseus.sh:ro
