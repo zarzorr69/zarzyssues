@@ -325,6 +325,47 @@ except Exception as exc:
     echo 'No providers, saved preferences, or credentials have been modified.'
 }
 
+# ZARZYSSEUS_DOCKER_INSTALL_ALL_FIXES_V1
+# Repairs only the existing application container; never changes host drivers,
+# Docker storage root, model volumes, Compose files, or host system packages.
+docker_install_all_fixes() {
+    require_confirmation FIX_ALL 'Run existing safe Docker toolkit repairs? May update application code and restart only Odysseus.' || return 2
+    echo "==> INSTALL ALL FIXES (Docker ${profile} profile)"
+    local failures=0 action
+    echo "[1/4] Check running application and existing toolkit"
+    if ! dc --profile app ps --status running --services | grep -Fxq odysseus; then
+        echo "[ERROR] Odysseus is not running. Start it explicitly before repairing." >&2
+        return 2
+    fi
+    if ! bridge status; then
+        echo "[ERROR] Toolkit is missing or incompatible. Install toolkit explicitly first." >&2
+        return 2
+    fi
+    echo "[2/4] Container-scoped agent/continuity/tool repairs"
+    for action in agent-tool-focus-install container-agent-repair chat-continuity-fix tool-json-fix; do
+        printf 'Repair: %s\n' "$action"
+        if ! native "$action"; then
+            printf '[FAIL] %s\n' "$action" >&2
+            failures=$((failures+1))
+        fi
+    done
+    echo "[3/4] Model visibility diagnosis (read-only)"
+    model_doctor || { echo "[WARN] Model visibility issues; no models pulled."; failures=$((failures+1)); }
+    echo "[4/4] Profile diagnostics (no GPU engine launch)"
+    if [[ "$profile" == full ]]; then
+        gpu_doctor || echo "[WARN] AMD GPU unavailable or not configured. Skipping GPU changes."
+    else
+        echo "[SKIP] GPU setup, as Docker CPU-only profile is selected."
+    fi
+    if (( failures == 0 )); then
+        echo "[OK] Container fixes complete. Restarting only Odysseus to load repaired code."
+        dc --profile app restart odysseus
+    else
+        printf '[WARN] %s repair steps failed; no automatic restart.\n' "$failures" >&2
+        return 2
+    fi
+}
+
 repair_core() {
     local action failures=0
     for action in agent-tool-focus-install container-agent-repair chat-continuity-fix tool-json-fix; do
@@ -477,6 +518,7 @@ dispatch() {
         profile) printf 'Docker hardware profile: %s\n' "$profile" ;;
         install|install-full|install-auto-fit) docker_install ;;
         toolkit-install) bridge install ;;
+        install-all-fixes) docker_install_all_fixes ;;
         auth-help|account-help) _auth_help ;;
         status|docker-status) kit_state ;;
         network-status) _network_show ;;
@@ -521,6 +563,7 @@ dispatch() {
 ZARZYSSEUS DOCKER — CPU and opt-in AMD GPU diagnostics
 Navigation categories mirror the native edition; implementations run in Compose.
   install                Ask approval, create CPU profile and start existing Compose stack
+  install-all-fixes      Confirm and run profile-aware container repairs (no host changes)
   toolkit-install        Install checksum-verified Zarzysseus helper into Odysseus
   start/stop/restart/status/logs  Manage the Docker Odysseus instance
   model-setup quality|agent|moe  Explicit CPU model download/profile setup
@@ -818,7 +861,7 @@ menu() {
         _zd_choose "ZARZYSSEUS — DOCKER MODE — ${profile^^} PROFILE" "${menu_items[@]}" || return 0
         option="$ZD_SELECTION"
         case "$option" in
-            1) submenu 'INSTALL / UPDATE' 'Install Odysseus + CPU model (always available)|install' 'Install/refresh toolkit helper|toolkit-install' 'Check current status|status' 'Check Ollama Modelfile mount|model-mount-check' 'Repair Ollama Modelfile mount (confirm REMOUNT)|model-mount-repair' 'First-run admin account setup|auth-setup' 'Existing-account password help|auth-help' ;;
+            1) submenu 'INSTALL / UPDATE' 'Install Odysseus + CPU model (always available)|install' 'Install/refresh toolkit helper|toolkit-install' 'INSTALL ALL FIXES / OPTIMIZATIONS|install-all-fixes' 'Check current status|status' 'Check Ollama Modelfile mount|model-mount-check' 'Repair Ollama Modelfile mount (confirm REMOUNT)|model-mount-repair' 'First-run admin account setup|auth-setup' 'Existing-account password help|auth-help' ;;
             2) submenu 'SERVICES' 'Start Odysseus|start' 'Stop services|stop' 'Restart Odysseus|restart' 'Show status|status' 'Show logs|logs' 'Stop containers, retain volumes|down' ;;
             3)
                 if [[ "$profile" == full ]]; then
