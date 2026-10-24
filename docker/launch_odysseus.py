@@ -69,7 +69,7 @@ def main(argv=None):
             print(f'Zarzysseus Ollama auto-registration: {status}', flush=True)
         except Exception as exc:
             print(f'Zarzysseus Ollama auto-registration deferred: {exc}', flush=True)
-        if os.getenv('CPU_PROFILE_GUARD', '1') == '1':
+    if os.getenv('CPU_PROFILE_GUARD', '1') == '1':
         llm_core = importlib.import_module('src.llm_core')
         llm_core._build_ollama_payload = guard_builder(
             getattr(llm_core, '_build_ollama_payload', None),
