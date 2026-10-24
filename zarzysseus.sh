@@ -14362,7 +14362,7 @@ _tui_run_command() {
     case "$action" in
         install|install-auto-fit|install-full|install-personal-faves|install-personal-skills|install-low-spec|install-low-spec-manual|install-lps|install-lps-manual|install-desert-sdk|model-install-audio|auth|tools|accelerator-setup|mlx-install|sam-mask-install|sam-mask|system-update|\
         opull|vpull|spull|mpull|hf-pull|model-install|model-pick|model-auto|\
-        install-manual-batch|model-pick-interactive|model-pull-batch|hf-token|ollama-pull|pull|skills-search-install|skills-install|skills-remove|skills-update|skills-update-one|skills-permissions-set|skills-permissions-clear|skills-sync-all|model-advisor-install|model-advisor-pin)
+        install-all-fixes|install-manual-batch|model-pick-interactive|model-pull-batch|hf-token|ollama-pull|pull|skills-search-install|skills-install|skills-remove|skills-update|skills-update-one|skills-permissions-set|skills-permissions-clear|skills-sync-all|model-advisor-install|model-advisor-pin)
             stream_output=1
             ;;
     esac
@@ -15204,6 +15204,39 @@ tui_desertant_mode_menu() {
     done
 }
 
+# ZARZYSSEUS_INSTALL_ALL_FIXES_V1
+# Operates on the existing native installation. Never runs a global OS update,
+# downloads models, reinstalls drivers, or deletes user data.
+install_all_fixes_native() {
+    [[ "${ZARZYSSEUS_CONTAINER_MODE:-0}" != 1 ]] || {
+        echo "ERROR: Use Docker controller for container repairs." >&2; return 2;
+    }
+    application_installed || { echo "ERROR: Install Zarzysseus first."; return 2; }
+    local failures=0
+    echo "==> INSTALL ALL FIXES (native profile: ${ZARZYSSEUS_PROFILE:-full})"
+    echo "[1/5] Agent routing and browser reliability"
+    agent_repair || { echo "[FAIL] Agent reliability"; failures=$((failures+1)); }
+    echo "[2/5] Chat continuity"
+    install_chat_continuity_guard || { echo "[FAIL] Chat continuity"; failures=$((failures+1)); }
+    echo "[3/5] Cookbook reliability"
+    install_cookbook_reliability_fixes || { echo "[FAIL] Cookbook fixes"; failures=$((failures+1)); }
+    echo "[4/5] Model endpoint reconciliation"
+    if ollama_api_ready; then
+        sync_ollama_with_odysseus || { echo "[FAIL] Ollama endpoints"; failures=$((failures+1)); }
+        ensure_ollama_sync_timer || { echo "[WARN] Sync timer unavailable"; failures=$((failures+1)); }
+    else
+        echo "[SKIP] Ollama is offline; previous model selection preserved."
+    fi
+    echo "[5/5] Profile-aware diagnostics"
+    if [[ "${ZARZYSSEUS_PROFILE:-full}" == full ]]; then
+        native_model_endpoint_doctor status || echo "[WARN] Endpoint diagnostic found issues."
+    else
+        echo "[SKIP] GPU runtime checks (CPU-only policy)."
+    fi
+    printf 'Repair sequence finished: %s failed step(s).\n' "$failures"
+    (( failures == 0 ))
+}
+
 tui_install_menu() {
     local choice
     local -a install_items
@@ -15217,6 +15250,7 @@ tui_install_menu() {
                 'INSTALL TOOLS'
                 'REPAIR ACCELERATOR STACK'
                 'INSTALL / VERIFY MLX-LM'
+                'INSTALL ALL FIXES / OPTIMIZATIONS'
                 'UNINSTALL ZARZYSSEUS'
                 'BACK'
             )
@@ -15228,6 +15262,7 @@ tui_install_menu() {
                 'TOOLS'
                 'GPU / ACCELERATOR'
                 'MLX-LM'
+                'ALL FIXES'
                 'UNINSTALL'
                 'BACK'
             )
@@ -15239,6 +15274,7 @@ tui_install_menu() {
                 'TOOLS'
                 'GPU'
                 'MLX'
+                'FIX ALL'
                 'REMOVE'
                 'BACK'
             )
@@ -15262,7 +15298,8 @@ tui_install_menu() {
                     if [[ "${ZARZYSSEUS_PROFILE:-full}" == cpu ]]; then
                         _tui_print_center 'CPU-only profile: MLX is disabled.'; _tui_pause
                     else _tui_run_command 'Installing / verifying MLX-LM' mlx-install; fi ;;
-                6)
+                6) _tui_run_command 'Installing compatible fixes' install-all-fixes ;;
+                7)
                     _tui_end
                     _tui_size
                     _tui_clear
@@ -15289,7 +15326,7 @@ tui_install_menu() {
                         _tui_pause
                     fi
                     ;;
-                7) return 0 ;;
+                8) return 0 ;;
             esac
         else
             return 0
@@ -18164,6 +18201,9 @@ PY_MANUAL_AUDIO_METADATA
     install)
         install_odysseus
         ;;
+    install-all-fixes)
+        install_all_fixes_native
+        ;;
     install-full)
         # "Full" now means the complete automatic profile requested by the TUI:
         # fitted text + video + photo + audio models in one selected profile.
@@ -18502,6 +18542,7 @@ Usage:
   $0 network-mode localhost|lan|status  Persist localhost or 0.0.0.0 binding; show LAN URLs
   $0 install             Clone (if needed), install, enable and start Zarzysseus
   $0 tools               Install Playwright + full SAM mask + vLLM + SGLang dependencies
+  $0 install-all-fixes   Repair installed features for current native profile
   $0 install-full        Full install + auto-fit text, video, photo and audio models + dependencies/skills
   $0 install-auto-fit <profile>  Profiles: any combination of text, video, photo, audio (hyphen separated)
   $0 providers           Show local model runtimes + endpoint reachability
