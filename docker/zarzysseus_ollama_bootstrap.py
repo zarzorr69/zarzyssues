@@ -68,7 +68,7 @@ def sync(base_url="http://cpu-ollama:11434"):
                 id=MANAGED_ID,
                 name="ZimaOS Ollama (CPU)",
                 base_url=url,
-                api_key=None,
+                api_key="",
                 is_enabled=True,
                 hidden_models="[]",
                 cached_models=json.dumps(names),
@@ -76,7 +76,6 @@ def sync(base_url="http://cpu-ollama:11434"):
                 model_type="llm",
                 endpoint_kind="local",
                 model_refresh_mode="auto",
-                owner=None,
             ))
             db.commit()
             return f"registered {url} with {len(names)} models"
