@@ -1,0 +1,30 @@
+name: Zarzysseus installer checks
+
+on:
+  push:
+    branches:
+      - main
+      - feature/profile-aware-install-all-fixes
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static-and-offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax and executable scripts
+        run: |
+          bash -n zarzysseus.sh
+          bash -n docker/zarzysseus-docker.sh
+          bash -n scripts/zarzysseus-auto-update.sh
+          bash -n scripts/install-fish-launcher.sh
+      - name: Python compile checks
+        run: |
+          python3 -m compileall -q docker/launch_odysseus.py docker/zarzysseus_bridge.py
+          if [ -f docker/zarzysseus_ollama_bootstrap.py ]; then
+            python3 -m py_compile docker/zarzysseus_ollama_bootstrap.py
+            python3 -m unittest discover -s docker/tests -p 'test_ollama_bootstrap.py' -v
+          fi

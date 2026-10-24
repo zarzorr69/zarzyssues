@@ -1048,9 +1048,36 @@ ollama_model_names() {
         python3 -c 'import json,sys; d=json.load(sys.stdin); print("\n".join(str(m.get("name","")).strip() for m in d.get("models",[]) if m.get("name")))'
 }
 
+ollama_resolve_model() {
+    # ZARZYSSEUS_OLLAMA_ENDPOINT_RECONCILE_V1
+    # Read canonical names from the live API; Ollama normalizes HF tags/casing.
+    local wanted="${1:-}"
+    [[ -n "$wanted" ]] || return 2
+    ollama_model_names | python3 -c '
+import sys
+wanted = sys.argv[1].strip()
+names = [line.strip() for line in sys.stdin if line.strip()]
+def normalized(name):
+    value = name.casefold()
+    tail = value.rsplit("/", 1)[-1]
+    return value if ":" in tail else value + ":latest"
+for matched in (
+    [n for n in names if n == wanted],
+    [n for n in names if n.casefold() == wanted.casefold()],
+    [n for n in names if normalized(n) == normalized(wanted)]
+):
+    if len(matched) == 1:
+        print(matched[0])
+        sys.exit(0)
+    if len(matched) > 1:
+        print("Ambiguous Ollama model: " + wanted, file=sys.stderr)
+        sys.exit(2)
+sys.exit(1)
+' "$wanted"
+}
+
 ollama_has_model() {
-    local wanted="$1"
-    ollama_model_names | grep -Fxq "$wanted"
+    ollama_resolve_model "$1" >/dev/null
 }
 
 write_env_value() {
@@ -1240,23 +1267,55 @@ hf_cache_repo_dir() {
 }
 
 hf_cache_complete() {
-    local repo="$1" cache snap
-    cache="$(hf_cache_repo_dir "$repo")"
-    [[ -d "$cache/snapshots" ]] || return 1
-    ! find "$cache/blobs" -type f -name '*.incomplete' -print -quit 2>/dev/null | grep -q . || return 1
-    while IFS= read -r snap; do
-        # A Diffusers pipeline has model_index.json plus component subfolders;
-        # a GGUF repo may contain nothing but a .gguf weight. Follow Hub symlinks.
-        if find -L "$snap" -type f \
-             \( -name '*.safetensors' -o -name '*.bin' -o -name '*.gguf' -o -name '*.pt' \) \
-             -print -quit 2>/dev/null | grep -q .; then
-            if [[ -f "$snap/model_index.json" || -f "$snap/config.json" ]] || \
-                find -L "$snap" -type f -name '*.gguf' -print -quit 2>/dev/null | grep -q .; then
-                return 0
-            fi
-        fi
-    done < <(find "$cache/snapshots" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
-    return 1
+    # ZARZYSSEUS_HF_MANIFEST_VERIFY_V1
+    # Verify the pinned Hub revision against the complete remote manifest.
+    # Stale .incomplete blobs from other revisions are not proof of failure.
+    local repo="$1" include_pattern="${2:-}"
+    "$VENV_DIR/bin/python" - "$repo" "$HF_HUB_CACHE" "$include_pattern" <<'PY_HF_MANIFEST_VERIFY'
+import fnmatch
+import sys
+from pathlib import Path
+from huggingface_hub import HfApi
+
+repo, cache_dir, pattern = sys.argv[1:4]
+try:
+    info = HfApi().model_info(repo, files_metadata=True, timeout=30)
+    if not info.sha or not info.siblings:
+        raise RuntimeError('No revision or model file manifest returned')
+except Exception as exc:
+    print(f'[hf-verify] Cannot obtain manifest: {type(exc).__name__}: {exc}', file=sys.stderr)
+    sys.exit(1)
+
+snapshot = Path(cache_dir) / ('models--' + repo.replace('/', '--')) / 'snapshots' / info.sha
+expected = [x for x in info.siblings if not pattern or fnmatch.fnmatchcase(x.rfilename, pattern)]
+if not expected:
+    print('[hf-verify] No files matched the selected model manifest', file=sys.stderr)
+    sys.exit(1)
+
+errors = []
+for item in expected:
+    path = snapshot / item.rfilename
+    size = getattr(item, 'size', None)
+    if size is None:
+        lfs = getattr(item, 'lfs', None)
+        if isinstance(lfs, dict):
+            size = lfs.get('size')
+    if not path.is_file():
+        errors.append((item.rfilename, 'missing or broken symlink'))
+    else:
+        actual = path.stat().st_size
+        if size is not None and actual != int(size):
+            errors.append((item.rfilename, f'expected {size}, got {actual}'))
+        elif size is None and actual == 0:
+            errors.append((item.rfilename, 'empty with unknown expected size'))
+
+if errors:
+    print(f'[hf-verify] INCOMPLETE: {len(errors)} of {len(expected)} files failed for {info.sha[:12]}', file=sys.stderr)
+    for name, why in errors[:20]:
+        print(f'  {name}: {why}', file=sys.stderr)
+    sys.exit(1)
+print(f'[hf-verify] COMPLETE: {len(expected)} files match the Hub manifest for {info.sha[:12]}')
+PY_HF_MANIFEST_VERIFY
 }
 
 repair_cookbook_download_tasks() {
@@ -1341,7 +1400,7 @@ hf_pull_model() {
     done
     (( rc == 0 )) || { echo "ERROR: Hugging Face download failed after $attempt attempts."; return "$rc"; }
 
-    if ! hf_cache_complete "$repo"; then
+    if ! hf_cache_complete "$repo" "$include_pattern"; then
         echo "ERROR: Hugging Face returned success but the cache is not complete for $repo."
         return 1
     fi
@@ -3609,11 +3668,11 @@ configure_engine_default_model() {
                 echo "ERROR: Ollama API is not reachable at $OLLAMA_ENDPOINT";
                 return 1
             fi
-            if ! ollama_has_model "$model"; then
-                echo "ERROR: Ollama model '$model' is not installed. Use: $0 opull $model"
+            model="$(ollama_resolve_model "$model")" || {
+                echo "ERROR: Ollama model '$model' not found in the live API; check: ollama list" >&2
                 return 1
-            fi
-            sync_ollama_with_odysseus "$model"
+            }
+            sync_ollama_with_odysseus "$model" || return 1
             ;;
         mlx_lm|mlx|mlx-lm)
             if ! mlx_lm_api_ready; then
@@ -7450,7 +7509,14 @@ PY_TOOL_HEALTH
 }
 
 sync_ollama_with_odysseus() {
-    local sync_preferred_model="${1:-$OLLAMA_DEFAULT_MODEL}"
+    local sync_preferred_model="${1:-}"
+    # Background synchronization has no preferred model and keeps user choice.
+    if [[ -n "$sync_preferred_model" ]]; then
+        sync_preferred_model="$(ollama_resolve_model "$sync_preferred_model")" || {
+            echo "ERROR: Requested Ollama model is absent from /api/tags: $1" >&2
+            return 1
+        }
+    fi
     if ! ollama_api_ready; then
         echo "ERROR: Ollama API is not reachable at $OLLAMA_ENDPOINT"
         return 1
@@ -7525,6 +7591,9 @@ try:
                 and url.port == 11434
                 and url.path.rstrip("/") == "/v1"):
             alias_ids.append(alias.id)
+            # Repair stale localhost aliases as well as ollama-local.
+            alias.cached_models = json.dumps(models)
+            alias.hidden_models = "[]"
             if alias.supports_tools is not desired_tools:
                 alias.supports_tools = desired_tools
                 alias.updated_at = now
@@ -7532,16 +7601,23 @@ try:
 
     settings = load_settings()
     current_default = str(settings.get("default_model") or "").strip()
-    if current_default in models:
-        chosen = current_default
-    elif preferred_model in models:
+    current_endpoint = str(settings.get("default_endpoint_id") or "")
+    ollama_endpoints = set(alias_ids) | {endpoint.id}
+    # A deliberate selection wins. A timer run never takes over vLLM/SGLang.
+    if preferred_model and preferred_model in models:
         chosen = preferred_model
+        update_default = True
+    elif current_endpoint in ollama_endpoints or not current_endpoint:
+        chosen = current_default if current_default in models else (models[0] if models else "")
+        update_default = True
     else:
-        chosen = models[0] if models else ""
-    settings["default_endpoint_id"] = endpoint.id
-    if chosen:
-        settings["default_model"] = chosen
-    save_settings(settings)
+        chosen = current_default
+        update_default = False
+    if update_default:
+        settings["default_endpoint_id"] = endpoint.id
+        if chosen:
+            settings["default_model"] = chosen
+        save_settings(settings)
 
     # Keep a content hash so the background sync timer can restart Zarzysseus
     # only when Ollama's model inventory actually changed.
@@ -14286,7 +14362,7 @@ _tui_run_command() {
     case "$action" in
         install|install-auto-fit|install-full|install-personal-faves|install-personal-skills|install-low-spec|install-low-spec-manual|install-lps|install-lps-manual|install-desert-sdk|model-install-audio|auth|tools|accelerator-setup|mlx-install|sam-mask-install|sam-mask|system-update|\
         opull|vpull|spull|mpull|hf-pull|model-install|model-pick|model-auto|\
-        install-manual-batch|model-pick-interactive|model-pull-batch|hf-token|ollama-pull|pull|skills-search-install|skills-install|skills-remove|skills-update|skills-update-one|skills-permissions-set|skills-permissions-clear|skills-sync-all|model-advisor-install|model-advisor-pin)
+        install-all-fixes|install-manual-batch|model-pick-interactive|model-pull-batch|hf-token|ollama-pull|pull|skills-search-install|skills-install|skills-remove|skills-update|skills-update-one|skills-permissions-set|skills-permissions-clear|skills-sync-all|model-advisor-install|model-advisor-pin)
             stream_output=1
             ;;
     esac
@@ -15128,6 +15204,39 @@ tui_desertant_mode_menu() {
     done
 }
 
+# ZARZYSSEUS_INSTALL_ALL_FIXES_V1
+# Operates on the existing native installation. Never runs a global OS update,
+# downloads models, reinstalls drivers, or deletes user data.
+install_all_fixes_native() {
+    [[ "${ZARZYSSEUS_CONTAINER_MODE:-0}" != 1 ]] || {
+        echo "ERROR: Use Docker controller for container repairs." >&2; return 2;
+    }
+    application_installed || { echo "ERROR: Install Zarzysseus first."; return 2; }
+    local failures=0
+    echo "==> INSTALL ALL FIXES (native profile: ${ZARZYSSEUS_PROFILE:-full})"
+    echo "[1/5] Agent routing and browser reliability"
+    agent_repair || { echo "[FAIL] Agent reliability"; failures=$((failures+1)); }
+    echo "[2/5] Chat continuity"
+    install_chat_continuity_guard || { echo "[FAIL] Chat continuity"; failures=$((failures+1)); }
+    echo "[3/5] Cookbook reliability"
+    install_cookbook_reliability_fixes || { echo "[FAIL] Cookbook fixes"; failures=$((failures+1)); }
+    echo "[4/5] Model endpoint reconciliation"
+    if ollama_api_ready; then
+        sync_ollama_with_odysseus || { echo "[FAIL] Ollama endpoints"; failures=$((failures+1)); }
+        ensure_ollama_sync_timer || { echo "[WARN] Sync timer unavailable"; failures=$((failures+1)); }
+    else
+        echo "[SKIP] Ollama is offline; previous model selection preserved."
+    fi
+    echo "[5/5] Profile-aware diagnostics"
+    if [[ "${ZARZYSSEUS_PROFILE:-full}" == full ]]; then
+        native_model_endpoint_doctor status || echo "[WARN] Endpoint diagnostic found issues."
+    else
+        echo "[SKIP] GPU runtime checks (CPU-only policy)."
+    fi
+    printf 'Repair sequence finished: %s failed step(s).\n' "$failures"
+    (( failures == 0 ))
+}
+
 tui_install_menu() {
     local choice
     local -a install_items
@@ -15141,6 +15250,7 @@ tui_install_menu() {
                 'INSTALL TOOLS'
                 'REPAIR ACCELERATOR STACK'
                 'INSTALL / VERIFY MLX-LM'
+                'INSTALL ALL FIXES / OPTIMIZATIONS'
                 'UNINSTALL ZARZYSSEUS'
                 'BACK'
             )
@@ -15152,6 +15262,7 @@ tui_install_menu() {
                 'TOOLS'
                 'GPU / ACCELERATOR'
                 'MLX-LM'
+                'ALL FIXES'
                 'UNINSTALL'
                 'BACK'
             )
@@ -15163,6 +15274,7 @@ tui_install_menu() {
                 'TOOLS'
                 'GPU'
                 'MLX'
+                'FIX ALL'
                 'REMOVE'
                 'BACK'
             )
@@ -15186,7 +15298,8 @@ tui_install_menu() {
                     if [[ "${ZARZYSSEUS_PROFILE:-full}" == cpu ]]; then
                         _tui_print_center 'CPU-only profile: MLX is disabled.'; _tui_pause
                     else _tui_run_command 'Installing / verifying MLX-LM' mlx-install; fi ;;
-                6)
+                6) _tui_run_command 'Installing compatible fixes' install-all-fixes ;;
+                7)
                     _tui_end
                     _tui_size
                     _tui_clear
@@ -15213,7 +15326,7 @@ tui_install_menu() {
                         _tui_pause
                     fi
                     ;;
-                7) return 0 ;;
+                8) return 0 ;;
             esac
         else
             return 0
@@ -18088,6 +18201,9 @@ PY_MANUAL_AUDIO_METADATA
     install)
         install_odysseus
         ;;
+    install-all-fixes)
+        install_all_fixes_native
+        ;;
     install-full)
         # "Full" now means the complete automatic profile requested by the TUI:
         # fitted text + video + photo + audio models in one selected profile.
@@ -18125,9 +18241,9 @@ PY_MANUAL_AUDIO_METADATA
             ollama_start
         fi
         echo "==> Pulling Ollama model: $MODEL_ARG"
-        ollama pull "$MODEL_ARG"
-        sync_ollama_with_odysseus "$MODEL_ARG"
-        configure_engine_default_model ollama "$MODEL_ARG"
+        ollama pull "$MODEL_ARG" || exit 1
+        # Canonicalize and reconcile the full endpoint inventory once.
+        configure_engine_default_model ollama "$MODEL_ARG" || exit 1
         show_link
         ;;
     vpull)
@@ -18426,6 +18542,7 @@ Usage:
   $0 network-mode localhost|lan|status  Persist localhost or 0.0.0.0 binding; show LAN URLs
   $0 install             Clone (if needed), install, enable and start Zarzysseus
   $0 tools               Install Playwright + full SAM mask + vLLM + SGLang dependencies
+  $0 install-all-fixes   Repair installed features for current native profile
   $0 install-full        Full install + auto-fit text, video, photo and audio models + dependencies/skills
   $0 install-auto-fit <profile>  Profiles: any combination of text, video, photo, audio (hyphen separated)
   $0 providers           Show local model runtimes + endpoint reachability
