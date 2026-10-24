@@ -59,6 +59,16 @@ def main(argv=None):
             app_root, app_root / 'data/local/zarzysseus-docker/overlay')
         if restored:
             print(f'Zarzysseus: {restored} managed source files verified/replayed.', flush=True)
+    if os.getenv('ZARZYSSEUS_OLLAMA_AUTOADD', '1') == '1':
+        # Endpoint enrollment is best-effort; model outages must not block the
+        # web UI. Do not change an existing manually registered endpoint.
+        try:
+            import zarzysseus_ollama_bootstrap
+            status = zarzysseus_ollama_bootstrap.sync(
+                os.getenv('OLLAMA_BASE_URL', 'http://cpu-ollama:11434'))
+            print(f'Zarzysseus Ollama auto-registration: {status}', flush=True)
+        except Exception as exc:
+            print(f'Zarzysseus Ollama auto-registration deferred: {exc}', flush=True)
     if os.getenv('CPU_PROFILE_GUARD', '1') == '1':
         llm_core = importlib.import_module('src.llm_core')
         llm_core._build_ollama_payload = guard_builder(
