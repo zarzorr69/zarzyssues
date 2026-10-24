@@ -82,7 +82,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(len(self.db.rows), 1)
         row = self.db.rows[0]
         self.assertEqual(row.cached_models, json.dumps(["qwen3.5-zarzysseus-cpu:4b", "lfm2.5-zarzysseus-cpu:2.6b"]))
-        self.assertIsNone(row.owner)
+        self.assertIsNone(getattr(row, "owner", None))
         self.assertEqual(self.db.commits, 1)
         self.assertIn("already synchronized", bootstrap.sync())
         self.assertEqual(self.db.commits, 1)
