@@ -1048,9 +1048,36 @@ ollama_model_names() {
         python3 -c 'import json,sys; d=json.load(sys.stdin); print("\n".join(str(m.get("name","")).strip() for m in d.get("models",[]) if m.get("name")))'
 }
 
+ollama_resolve_model() {
+    # ZARZYSSEUS_OLLAMA_ENDPOINT_RECONCILE_V1
+    # Read canonical names from the live API; Ollama normalizes HF tags/casing.
+    local wanted="${1:-}"
+    [[ -n "$wanted" ]] || return 2
+    ollama_model_names | python3 -c '
+import sys
+wanted = sys.argv[1].strip()
+names = [line.strip() for line in sys.stdin if line.strip()]
+def normalized(name):
+    value = name.casefold()
+    tail = value.rsplit("/", 1)[-1]
+    return value if ":" in tail else value + ":latest"
+for matched in (
+    [n for n in names if n == wanted],
+    [n for n in names if n.casefold() == wanted.casefold()],
+    [n for n in names if normalized(n) == normalized(wanted)]
+):
+    if len(matched) == 1:
+        print(matched[0])
+        sys.exit(0)
+    if len(matched) > 1:
+        print("Ambiguous Ollama model: " + wanted, file=sys.stderr)
+        sys.exit(2)
+sys.exit(1)
+' "$wanted"
+}
+
 ollama_has_model() {
-    local wanted="$1"
-    ollama_model_names | grep -Fxq "$wanted"
+    ollama_resolve_model "$1" >/dev/null
 }
 
 write_env_value() {
@@ -1240,23 +1267,55 @@ hf_cache_repo_dir() {
 }
 
 hf_cache_complete() {
-    local repo="$1" cache snap
-    cache="$(hf_cache_repo_dir "$repo")"
-    [[ -d "$cache/snapshots" ]] || return 1
-    ! find "$cache/blobs" -type f -name '*.incomplete' -print -quit 2>/dev/null | grep -q . || return 1
-    while IFS= read -r snap; do
-        # A Diffusers pipeline has model_index.json plus component subfolders;
-        # a GGUF repo may contain nothing but a .gguf weight. Follow Hub symlinks.
-        if find -L "$snap" -type f \
-             \( -name '*.safetensors' -o -name '*.bin' -o -name '*.gguf' -o -name '*.pt' \) \
-             -print -quit 2>/dev/null | grep -q .; then
-            if [[ -f "$snap/model_index.json" || -f "$snap/config.json" ]] || \
-                find -L "$snap" -type f -name '*.gguf' -print -quit 2>/dev/null | grep -q .; then
-                return 0
-            fi
-        fi
-    done < <(find "$cache/snapshots" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
-    return 1
+    # ZARZYSSEUS_HF_MANIFEST_VERIFY_V1
+    # Verify the pinned Hub revision against the complete remote manifest.
+    # Stale .incomplete blobs from other revisions are not proof of failure.
+    local repo="$1" include_pattern="${2:-}"
+    "$VENV_DIR/bin/python" - "$repo" "$HF_HUB_CACHE" "$include_pattern" <<'PY_HF_MANIFEST_VERIFY'
+import fnmatch
+import sys
+from pathlib import Path
+from huggingface_hub import HfApi
+
+repo, cache_dir, pattern = sys.argv[1:4]
+try:
+    info = HfApi().model_info(repo, files_metadata=True, timeout=30)
+    if not info.sha or not info.siblings:
+        raise RuntimeError('No revision or model file manifest returned')
+except Exception as exc:
+    print(f'[hf-verify] Cannot obtain manifest: {type(exc).__name__}: {exc}', file=sys.stderr)
+    sys.exit(1)
+
+snapshot = Path(cache_dir) / ('models--' + repo.replace('/', '--')) / 'snapshots' / info.sha
+expected = [x for x in info.siblings if not pattern or fnmatch.fnmatchcase(x.rfilename, pattern)]
+if not expected:
+    print('[hf-verify] No files matched the selected model manifest', file=sys.stderr)
+    sys.exit(1)
+
+errors = []
+for item in expected:
+    path = snapshot / item.rfilename
+    size = getattr(item, 'size', None)
+    if size is None:
+        lfs = getattr(item, 'lfs', None)
+        if isinstance(lfs, dict):
+            size = lfs.get('size')
+    if not path.is_file():
+        errors.append((item.rfilename, 'missing or broken symlink'))
+    else:
+        actual = path.stat().st_size
+        if size is not None and actual != int(size):
+            errors.append((item.rfilename, f'expected {size}, got {actual}'))
+        elif size is None and actual == 0:
+            errors.append((item.rfilename, 'empty with unknown expected size'))
+
+if errors:
+    print(f'[hf-verify] INCOMPLETE: {len(errors)} of {len(expected)} files failed for {info.sha[:12]}', file=sys.stderr)
+    for name, why in errors[:20]:
+        print(f'  {name}: {why}', file=sys.stderr)
+    sys.exit(1)
+print(f'[hf-verify] COMPLETE: {len(expected)} files match the Hub manifest for {info.sha[:12]}')
+PY_HF_MANIFEST_VERIFY
 }
 
 repair_cookbook_download_tasks() {
@@ -1341,7 +1400,7 @@ hf_pull_model() {
     done
     (( rc == 0 )) || { echo "ERROR: Hugging Face download failed after $attempt attempts."; return "$rc"; }
 
-    if ! hf_cache_complete "$repo"; then
+    if ! hf_cache_complete "$repo" "$include_pattern"; then
         echo "ERROR: Hugging Face returned success but the cache is not complete for $repo."
         return 1
     fi
@@ -3609,11 +3668,11 @@ configure_engine_default_model() {
                 echo "ERROR: Ollama API is not reachable at $OLLAMA_ENDPOINT";
                 return 1
             fi
-            if ! ollama_has_model "$model"; then
-                echo "ERROR: Ollama model '$model' is not installed. Use: $0 opull $model"
+            model="$(ollama_resolve_model "$model")" || {
+                echo "ERROR: Ollama model '$model' not found in the live API; check: ollama list" >&2
                 return 1
-            fi
-            sync_ollama_with_odysseus "$model"
+            }
+            sync_ollama_with_odysseus "$model" || return 1
             ;;
         mlx_lm|mlx|mlx-lm)
             if ! mlx_lm_api_ready; then
@@ -7450,7 +7509,14 @@ PY_TOOL_HEALTH
 }
 
 sync_ollama_with_odysseus() {
-    local sync_preferred_model="${1:-$OLLAMA_DEFAULT_MODEL}"
+    local sync_preferred_model="${1:-}"
+    # Background synchronization has no preferred model and keeps user choice.
+    if [[ -n "$sync_preferred_model" ]]; then
+        sync_preferred_model="$(ollama_resolve_model "$sync_preferred_model")" || {
+            echo "ERROR: Requested Ollama model is absent from /api/tags: $1" >&2
+            return 1
+        }
+    fi
     if ! ollama_api_ready; then
         echo "ERROR: Ollama API is not reachable at $OLLAMA_ENDPOINT"
         return 1
@@ -7525,6 +7591,9 @@ try:
                 and url.port == 11434
                 and url.path.rstrip("/") == "/v1"):
             alias_ids.append(alias.id)
+            # Repair stale localhost aliases as well as ollama-local.
+            alias.cached_models = json.dumps(models)
+            alias.hidden_models = "[]"
             if alias.supports_tools is not desired_tools:
                 alias.supports_tools = desired_tools
                 alias.updated_at = now
@@ -7532,16 +7601,23 @@ try:
 
     settings = load_settings()
     current_default = str(settings.get("default_model") or "").strip()
-    if current_default in models:
-        chosen = current_default
-    elif preferred_model in models:
+    current_endpoint = str(settings.get("default_endpoint_id") or "")
+    ollama_endpoints = set(alias_ids) | {endpoint.id}
+    # A deliberate selection wins. A timer run never takes over vLLM/SGLang.
+    if preferred_model and preferred_model in models:
         chosen = preferred_model
+        update_default = True
+    elif current_endpoint in ollama_endpoints or not current_endpoint:
+        chosen = current_default if current_default in models else (models[0] if models else "")
+        update_default = True
     else:
-        chosen = models[0] if models else ""
-    settings["default_endpoint_id"] = endpoint.id
-    if chosen:
-        settings["default_model"] = chosen
-    save_settings(settings)
+        chosen = current_default
+        update_default = False
+    if update_default:
+        settings["default_endpoint_id"] = endpoint.id
+        if chosen:
+            settings["default_model"] = chosen
+        save_settings(settings)
 
     # Keep a content hash so the background sync timer can restart Zarzysseus
     # only when Ollama's model inventory actually changed.
@@ -18125,9 +18201,9 @@ PY_MANUAL_AUDIO_METADATA
             ollama_start
         fi
         echo "==> Pulling Ollama model: $MODEL_ARG"
-        ollama pull "$MODEL_ARG"
-        sync_ollama_with_odysseus "$MODEL_ARG"
-        configure_engine_default_model ollama "$MODEL_ARG"
+        ollama pull "$MODEL_ARG" || exit 1
+        # Canonicalize and reconcile the full endpoint inventory once.
+        configure_engine_default_model ollama "$MODEL_ARG" || exit 1
         show_link
         ;;
     vpull)
