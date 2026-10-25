@@ -215,7 +215,7 @@ def patch_source(source: str) -> str:
         raise ValueError(
             "Installed Odysseus source differs from the tested routing layout; "
             "no file changed. " + "; ".join(mismatches)
-            + ("\\nNearby routing code:\\n" + "\\n".join(samples) if samples else "")
+            + ("\nNearby routing code:\n" + "\n".join(samples) if samples else "")
         )
     updated = source.replace(HELPER_ANCHOR, RUNTIME_HELPER + "\n" + HELPER_ANCHOR, 1)
     api_extra = '''            # Semantic MCP discovery only when there is no caller/contract tool
