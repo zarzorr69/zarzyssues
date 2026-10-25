@@ -494,18 +494,12 @@ def patch_source(source: str) -> str:
 '''
     updated = updated.replace(LEGACY_ANCHOR, legacy, 1)
     if "# ZARZYSSEUS_QWEN_EXPLICIT_TOOL_FOCUS_V4" in source and QWEN_ANCHOR in updated:
-        # Preserve previous USER message only as tool-selection context.
-        context = '''                if (len(_zar_text.strip()) <= 150 and
-                        _zar_re.search(r"^(?:and|also|now|then|yes|go ahead|do it|continue|screenshot|click|open)\\b",
-                                       _zar_text.strip(), _zar_re.I)):
-                    _zar_history = [m.get("content").strip() for m in messages[-24:]
-                                    if isinstance(m, dict) and m.get("role") == "user"
-                                    and isinstance(m.get("content"), str) and m.get("content").strip()]
-                    if len(_zar_history) >= 2:
-                        _zar_prior = _zar_history[-2] if _zar_history[-1] == _zar_text.strip() else _zar_history[-1]
-                        _zar_text = _zar_prior[-1100:] + "\\n" + _zar_text
+        # Qwen's browser filtering must use the same task-specific, user-only
+        # rolling context as the MCP/recall selector.
+        qwen_context = '''                # ZARZYSSEUS_QWEN_CONTEXT_CONTINUITY_V2
+                _zar_text = _zar_seamless_user_context(_zar_text, messages)
 '''
-        updated = updated.replace(QWEN_ANCHOR, QWEN_ANCHOR + context, 1)
+        updated = updated.replace(QWEN_ANCHOR, QWEN_ANCHOR + qwen_context, 1)
     ast.parse(updated)
     return updated
 
