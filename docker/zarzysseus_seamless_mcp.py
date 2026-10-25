@@ -217,7 +217,7 @@ def patch_source(source: str) -> str:
             "no file changed. " + "; ".join(mismatches)
             + ("\nNearby routing code:\n" + "\n".join(samples) if samples else "")
         )
-    if not all(re.search(r"\\b" + field + r"\\b", source) for field in
+    if not all(re.search(r"\b" + field + r"\b", source) for field in
                ("turn_contract", "_caller_relevant_tools", "guide_only")):
         raise ValueError(
             "This Odysseus version lacks a required caller-scope guard. "
