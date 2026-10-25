@@ -67,6 +67,9 @@ class SeamlessMCPTests(unittest.TestCase):
     def test_patch_idempotent_and_compilable(self):
         source = (
             "def agent(messages):\n"
+            "    turn_contract = None\n"
+            "    _caller_relevant_tools = None\n"
+            "    guide_only = False\n"
             "    def _filter_route_tool_schemas(schemas):\n"
             "        return schemas\n"
             "    def _tool_schemas_for_route(route_state):\n"
@@ -87,6 +90,9 @@ class SeamlessMCPTests(unittest.TestCase):
     def test_runtime_injected_selector_handles_followups(self):
         source = (
             "def agent(messages):\n"
+            "    turn_contract = None\n"
+            "    _caller_relevant_tools = None\n"
+            "    guide_only = False\n"
             "    def _filter_route_tool_schemas(schemas):\n"
             "        return schemas\n"
             "    def _tool_schemas_for_route(route_state):\n"
