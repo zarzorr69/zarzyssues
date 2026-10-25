@@ -47,6 +47,29 @@ class SeamlessMCPTests(unittest.TestCase):
         context = mod.contextual_request("now screenshot it", messages)
         self.assertIn("https://example.org", context)
 
+    def test_css_default_inherits_multi_turn_request(self):
+        messages = [
+            {"role": "user", "content": "Open https://example.org"},
+            {"role": "assistant", "content": "Navigation completed"},
+            {"role": "user", "content": "Now take a screenshot of that website"},
+            {"role": "assistant", "content": "CSS or device scale?"},
+            {"role": "user", "content": "CSS is fine"},
+        ]
+        context = mod.contextual_request("CSS is fine", messages)
+        self.assertIn("https://example.org", context)
+        self.assertIn("screenshot", context)
+        schemas = mod.select_mcp_schemas("CSS is fine", messages, self.tools)
+        self.assertIn("mcp__builtin_browser__browser_take_screenshot", self.names(schemas))
+
+    def test_previous_chats_and_saved_memory_tool_hints(self):
+        self.assertIn("search_chats", mod.relevant_memory_tools(
+            "What did we decide in our previous chat about Zarzysseus?", []))
+        self.assertIn("manage_memory", mod.relevant_memory_tools(
+            "Remember this: always use fish in my Linux instructions", []))
+        self.assertNotIn("manage_memory", mod.relevant_memory_tools(
+            "Never remember or save this", []))
+        self.assertEqual(mod.relevant_memory_tools("Hello", []), set())
+
     def test_no_spurious_tool_on_plain_chat(self):
         self.assertEqual(mod.select_mcp_schemas("Hello, how are you?", [], self.tools), [])
 
@@ -91,9 +114,14 @@ class SeamlessMCPTests(unittest.TestCase):
     def test_runtime_injected_selector_handles_followups(self):
         patched = mod.patch_source(self.legacy_agent_source())
         outer = ast.parse(patched).body[0]
-        helper = next(n for n in outer.body if isinstance(n, ast.FunctionDef)
-                      and n.name == "_zar_seamless_mcp_tools")
-        module = ast.fix_missing_locations(ast.Module(body=[helper], type_ignores=[]))
+        helpers = [n for n in outer.body if isinstance(n, ast.FunctionDef)
+                   and n.name in (
+                       "_zar_seamless_user_context",
+                       "_zar_seamless_memory_names",
+                       "_zar_seamless_mcp_tools",
+                   )]
+        self.assertEqual(len(helpers), 3)
+        module = ast.fix_missing_locations(ast.Module(body=helpers, type_ignores=[]))
         scope = {}
         exec(compile(module, "<runtime-helper>", "exec"), scope)
         messages = [
