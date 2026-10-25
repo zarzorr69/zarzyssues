@@ -28,7 +28,7 @@ CURRENT_NATIVE_RETURN = '''        return [schema for schema in schemas or ()
 '''
 READ_ONLY = {'agent-doctor', 'agent-smoke', 'container-agent-doctor', 'container-agent-smoke', 'tool-health', 'mcp-health', 'skills-doctor',
              'skills-health', 'skills-list', 'skills-manage-list', 'skills-permissions',
-             'skills-summary-installed', 'skills-summary', 'skills-search',
+             'skills-summary-installed', 'skills-summary', 'skills-search', 'seamless-mcp-status',
              'model-advisor', 'model-advisor-json', 'model-advisor-pins', 'providers',
              'model-list', 'model-list-json'}
 MUTATING = {'container-agent-repair', 'container-agent-legacy-repair', 'container-agent-rollback', 'agent-rollback', 'agent-tool-focus-install',
@@ -36,7 +36,7 @@ MUTATING = {'container-agent-repair', 'container-agent-legacy-repair', 'containe
             'skills-sync-all', 'skills-install', 'skills-update', 'skills-update-one',
             'skills-remove', 'skills-permissions-set', 'skills-permissions-clear',
             'skills-setup', 'skills-mcp-fix', 'mcp-setup', 'ollama-sync',
-            'install-personal-skills'}
+            'install-personal-skills', 'seamless-mcp-install'}
 
 
 def replace_once(source, old, new):
@@ -184,6 +184,19 @@ def run_action(root, action, arguments):
         raise ValueError('Installed compatibility copy was modified or is from another toolkit version.')
     replay_dir = storage / 'overlay'
     overlay.apply(root, replay_dir)
+    if action in ('seamless-mcp-install', 'seamless-mcp-status'):
+        helper = Path('/cpu-kit/zarzysseus_seamless_mcp.py')
+        if not helper.is_file():
+            raise ValueError('Docker MCP patch helper is not mounted; sync the current kit first.')
+        mode = 'install' if action == 'seamless-mcp-install' else 'status'
+        before = overlay.snapshot(root) if mode == 'install' else None
+        result = subprocess.run([sys.executable, str(helper), mode, str(root / 'src/agent_loop.py')],
+                                cwd=root)
+        if before is not None and result.returncode == 0:
+            changed = overlay.capture(root, replay_dir, before)
+            print(json.dumps({'source_changes_recorded': changed, 'helper_exit_code': result.returncode}), flush=True)
+            print('Restart Odysseus from Docker menu to load new MCP routing.', flush=True)
+        return result.returncode
     mutating = action_is_mutating(action, arguments)
     before = overlay.snapshot(root) if mutating else None
     env = dict(os.environ, HOME=str(root), PROJECT_DIR=str(root), VENV_DIR=str(Path(sys.executable).parent.parent),
