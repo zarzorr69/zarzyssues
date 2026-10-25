@@ -179,10 +179,10 @@ RUNTIME_HELPER = '''
         _follow = len(_current) <= 150 and bool(_re.search(
             r"^(?:and|also|now|then|yes|sure|go ahead|do it|continue|"
             r"same|what about|can you|could you|screenshot|click|open|send|"
-            r"css|device|default|fine|okay|ok|that works|do that)\b",
+            r"css|device|default|fine|okay|ok|that works|do that)\\b",
             _current, _re.I
         ))
-        _negative = _re.search(r"^(?:no|stop|cancel|don't|do not|never)\b",
+        _negative = _re.search(r"^(?:no|stop|cancel|don't|do not|never)\\b",
                                _current, _re.I)
         if not _follow or _negative:
             return _current
@@ -196,14 +196,14 @@ RUNTIME_HELPER = '''
         _prior = _users[-3:]
         if not _prior:
             return _current
-        return ("Previous user requests:\n"
-                + "\n".join(u[-580:] for u in _prior)[-1800:]
-                + "\nCurrent request: " + _current)
+        return ("Previous user requests:\\n"
+                + "\\n".join(u[-580:] for u in _prior)[-1800:]
+                + "\\nCurrent request: " + _current)
 
     def _zar_seamless_memory_names(text, recent_messages):
         import re as _re
         _latest = str(text or "").strip().lower()
-        if _re.search(r"^(?:no|don't|do not|never|stop|cancel)\b", _latest):
+        if _re.search(r"^(?:no|don't|do not|never|stop|cancel)\\b", _latest):
             return set()
         _ctx = _zar_seamless_user_context(text, recent_messages).lower()
         _search = (
