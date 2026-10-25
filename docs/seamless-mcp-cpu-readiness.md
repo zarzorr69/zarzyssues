@@ -48,6 +48,47 @@ These tools still obey explicit caller selection, disabled-tool lists, approvals
 3. Ask "Remember this: I prefer fish commands". Verify the result in Brain, then ask "What do you remember about my shell?". Verify real `manage_memory` usage.
 4. Test that disabled tools stay disabled and an explicit caller-tool scope is never broadened.
 
+## When the model narrates actions instead of calling tools
+
+The UI may show text such as "I will use browser_take_screenshot" without any
+actual tool event. **This is not a successful MCP call.** Distinguish three
+failure points: (1) no tool schema was offered by the router; (2) schemas were
+offered but the model returned ordinary prose; (3) a structured call was
+produced but Odysseus blocked/rejected it.
+
+For a *read-only / no-side-effect* model transport check on the native Linux PC:
+
+```bash
+python3 scripts/zarzysseus_tool_call_probe.py \
+    --model dolphin-mistral-24b-venice-edition --transport both
+```
+
+This sends a single **fake** function schema named `probe_visit_page` to
+Ollama via `/v1/chat/completions` and `/api/chat`. It never executes that
+function, downloads models, or changes GitHub/browser state. A structured
+`tool_calls` result demonstrates proposal support on that transport; narration
+alone is a failed proposal. For comparison repeat with
+`--model qwen3-vl:8b --transport openai` when that model is already installed.
+
+Check whether the **same actual Odysseus turn** offered browser schemas:
+
+```bash
+journalctl --user -u odysseus.service --since "10 minutes ago" --no-pager -o cat |
+  grep -E 'tools_sent=|tool_names=|native tool|tool_calls|zarzysseus-mcp|tool-rag' |
+  tail -n 55
+```
+
+Review log lines for tokens, local URLs or paths before sharing them publicly.
+
+Context continuity V2 is not sufficient by itself to force the model to use a
+tool. The V3 route matcher also handles **bare hostnames** such as
+`example.com` in addition to `https://example.com` without widening
+tool permissions. It is a source-guarded upgrade from installed V2 and creates
+its own backup. It cannot guarantee that a model will return function-call JSON.
+If the model still narrates with schemas offered, investigate native tool
+support/template or add a narrowly scoped, permission-preserving one-shot retry
+through the existing Odysseus dispatcher—never treat prose as execution.
+
 ## 2. ZimaOS CPU-only safety diagnosis
 
 Target: fourth-generation Intel Core i7, 16 GiB DDR3, no GPU. Previously, simultaneous Odysseus/Ollama operations were followed by extreme I/O pressure and a frozen host. **Do not use a generation or preload loop as a diagnostic.**
