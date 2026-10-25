@@ -189,8 +189,20 @@ RUNTIME_HELPER = '''
 def patch_source(source: str) -> str:
     if MARKER in source:
         return source
-    if any(source.count(a) != 1 for a in (HELPER_ANCHOR, API_ANCHOR, LEGACY_ANCHOR)):
-        raise ValueError("Odysseus agent tool routing changed; refusing unrecognized source")
+    anchors = {
+        "route helper": HELPER_ANCHOR,
+        "API model MCP filter": API_ANCHOR,
+        "legacy MCP fallback": LEGACY_ANCHOR,
+    }
+    mismatches = [
+        f"{label}: found {source.count(anchor)}, expected 1"
+        for label, anchor in anchors.items() if source.count(anchor) != 1
+    ]
+    if mismatches:
+        raise ValueError(
+            "Installed Odysseus source differs from the tested routing layout; "
+            "no file changed. " + "; ".join(mismatches)
+        )
     updated = source.replace(HELPER_ANCHOR, RUNTIME_HELPER + "\n" + HELPER_ANCHOR, 1)
     api_extra = '''            # Semantic MCP discovery only when there is no caller/contract tool
             # restriction. Existing disabled-tool and approval filters still apply.
