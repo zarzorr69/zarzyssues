@@ -35,6 +35,10 @@ jobs:
           if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
             docker compose --env-file docker/.env.example -f docker/compose.yaml config --quiet
           fi
+      - name: Validate no-execution Ollama tool-call probe
+        run: |
+          python3 -m py_compile scripts/zarzysseus_tool_call_probe.py
+          python3 -m unittest discover -s docker/tests -p 'test_tool_call_probe.py' -v
       - name: MCP semantic routing regression tests
         run: |
           python3 -m unittest discover -s docker/tests -p 'test_seamless_mcp.py' -v
