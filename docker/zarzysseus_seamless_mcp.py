@@ -217,12 +217,18 @@ def patch_source(source: str) -> str:
             "no file changed. " + "; ".join(mismatches)
             + ("\nNearby routing code:\n" + "\n".join(samples) if samples else "")
         )
-    if not all(re.search(r"\b" + field + r"\b", source) for field in
-               ("turn_contract", "_caller_relevant_tools", "guide_only")):
+    required_guards = ("turn_contract", "_caller_relevant_tools", "guide_only")
+    missing_guards = [
+        name for name in required_guards
+        if not re.search(r"\b" + re.escape(name) + r"\b", source)
+    ]
+    if missing_guards:
         raise ValueError(
-            "This Odysseus version lacks a required caller-scope guard. "
-            "Refusing to surface extra MCP tools without enforcing existing "
-            "caller and approval restrictions; no file changed."
+            "This Odysseus version is missing caller-scope guard(s): "
+            + ", ".join(missing_guards)
+            + ". Refusing to widen MCP tool visibility before locating the "
+              "equivalent authorization checks; no file changed. "
+              "Run the read-only 'diagnose' action to inspect routing context."
         )
     updated = source.replace(HELPER_ANCHOR, RUNTIME_HELPER + "\n" + HELPER_ANCHOR, 1)
     # Enrich the existing relevance set BEFORE Odysseus decides which API
@@ -300,15 +306,51 @@ def install(path: Path) -> int:
     return 0
 
 
+def diagnose_source(source: str) -> None:
+    """Describe routing structure without writing source or printing secrets."""
+    print("=== Odysseus installed agent routing (read-only) ===")
+    symbols = (
+        "turn_contract", "_caller_relevant_tools", "guide_only",
+        "relevant_tools", "_relevant_tools", "tool_policy",
+        "disabled_tools", "_caller_hard_denials", "forced_tools",
+        "route_relevant_tools", "route_state", "mcp_schemas",
+    )
+    for symbol in symbols:
+        count = len(re.findall(r"\b" + re.escape(symbol) + r"\b", source))
+        print(f"{symbol}: {count} occurrence(s)")
+    lines = source.splitlines()
+    markers = (
+        "def _filter_route_tool_schemas(",
+        "def _tool_schemas_for_route(",
+        "route_relevant_tools =",
+        "wants_mcp =",
+    )
+    printed = set()
+    for marker in markers:
+        hits = [i for i, line in enumerate(lines) if marker in line]
+        print(f"\nRouting anchor {marker!r}: {len(hits)} hit(s)")
+        for index in hits[:2]:
+            lo, hi = max(0, index - 4), min(len(lines), index + 23)
+            for k in range(lo, hi):
+                if k in printed:
+                    continue
+                printed.add(k)
+                print(f"{k+1}: {lines[k][:180]}")
+    print("\nRead-only diagnosis complete. No files modified.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("install", "status", "dry-run"))
+    parser.add_argument("action", choices=("install", "status", "dry-run", "diagnose"))
     parser.add_argument("source", type=Path)
     args = parser.parse_args()
     if not args.source.is_file():
         print("Agent loop source does not exist", file=sys.stderr)
         return 2
     data = args.source.read_text(encoding="utf-8")
+    if args.action == "diagnose":
+        diagnose_source(data)
+        return 0
     if args.action == "status":
         print("Seamless MCP:", "installed" if MARKER in data else "not installed")
         return int(MARKER not in data)
