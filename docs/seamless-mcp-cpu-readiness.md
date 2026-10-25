@@ -28,6 +28,26 @@ bash zarzysseus.sh docker seamless-mcp-install
 
 The Docker bridge records source changes in the existing guarded overlay and prints restart instructions. The one-click Docker fix action includes it, but is separate from a read-only doctor.
 
+## 1.1 Current-chat context and cross-chat recall
+
+Short follow-ups like **CSS is fine**, **now screenshot it**, and **do that** can carry a bounded window of the last three user requests into tool relevance. Assistant replies, pages, and tool outputs are not treated as user authorization.
+
+The agent can also offer the **existing Odysseus tools** when relevant:
+
+- `search_chats`: find the signed-in user's past session evidence for natural requests such as "we discussed this in our previous chat". Merely offering this tool does not read any chats.
+- `manage_memory`: retrieve or save information through Odysseus Brain when explicitly asked to remember, save a preference, or describe saved memories. No automatic transcript scraping or silent saving.
+
+These tools still obey explicit caller selection, disabled-tool lists, approvals and Odysseus account permissions. The patch does not introduce an unscoped global memory database.
+
+**Limitations:** No automatic full-history semantic indexing, background summarization, or guarantee that a small model calls every offered tool. Durable memories require an actual successful `manage_memory` call. The screenshot tool can return pixels to the UI even if a text-only model cannot interpret them; Dolphin-Mistral GGUF should not be expected to understand Base64 image data. For visual analysis use a vision-capable model, then test whether the screenshot is actually passed as image content.
+
+**Manual native tests after successful dry-run/install and managed restart:**
+
+1. Ask "Open https://example.com and take a screenshot" in Agent mode, without a skill; then follow up with "CSS is fine". Verify real browser calls and screenshot UI, not just text saying it succeeded.
+2. In a fresh chat ask "We discussed my AI server in another chat; find that chat and remind me what model we chose." Check for a real `search_chats` tool execution.
+3. Ask "Remember this: I prefer fish commands". Verify the result in Brain, then ask "What do you remember about my shell?". Verify real `manage_memory` usage.
+4. Test that disabled tools stay disabled and an explicit caller-tool scope is never broadened.
+
 ## 2. ZimaOS CPU-only safety diagnosis
 
 Target: fourth-generation Intel Core i7, 16 GiB DDR3, no GPU. Previously, simultaneous Odysseus/Ollama operations were followed by extreme I/O pressure and a frozen host. **Do not use a generation or preload loop as a diagnostic.**
