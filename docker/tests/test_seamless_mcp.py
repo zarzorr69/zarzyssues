@@ -237,6 +237,12 @@ class SeamlessMCPTests(unittest.TestCase):
             '                   else _zar_seamless_permitted_offerings())\n'
         )
         source = source.replace(mod.LEGACY_ANCHOR, old_legacy, 1)
+        # Production V1 ends this non-API route with Odysseus' own filter.
+        source = source.replace(
+            "        return route_relevant_tools\n",
+            "        return _filter_route_tool_schemas(schemas)\n",
+            1,
+        )
         self.assertNotIn(mod.CONTEXT_MARKER, source)
         updated = mod.patch_source(source)
         self.assertIn(mod.CONTEXT_MARKER, updated)
