@@ -4291,6 +4291,27 @@ source.write_text(updated, encoding="utf-8")
 print(f"    [installed] Qwen explicit-tool + skill + MCP routing focus V4; backup: {backup}")
 PY_QWEN_FOCUS
 }
+# Semantic MCP discovery from ordinary user requests (no explicit skill required).
+install_seamless_mcp_context() {
+    local mode="${1:-install}" helper="" candidate
+    for candidate in \
+        "$_ZZ_LAUNCH_DIR/scripts/zarzysseus_seamless_mcp.py" \
+        "$HOME/.local/share/zarzysseus/repo/scripts/zarzysseus_seamless_mcp.py"; do
+        if [[ -f "$candidate" ]]; then helper="$candidate"; break; fi
+    done
+    [[ -n "$helper" ]] || {
+        echo 'ERROR: Seamless MCP helper missing. Update the full Zarzysseus release.' >&2
+        return 2
+    }
+    [[ -f "$PROJECT_DIR/src/agent_loop.py" ]] || {
+        echo 'ERROR: Odysseus agent_loop.py is missing.' >&2; return 2
+    }
+    local py="$VENV_DIR/bin/python"
+    [[ -x "$py" ]] || py="$(command -v python3 || :)"
+    [[ -n "$py" ]] || return 2
+    "$py" "$helper" "$mode" "$PROJECT_DIR/src/agent_loop.py"
+}
+
 # MCP compatibility + FreeMCP discovery -------------------------------------------------
 # Odysseus currently uses the MCP 1.x decorator API in its built-in Python
 # servers. Detect that source shape before pinning, so a future upstream MCP 2
@@ -7406,6 +7427,7 @@ agent_reliability_auto_install() {
 agent_repair() {
     application_installed || { echo 'ERROR: Install Odysseus first.'; return 1; }
     install_qwen_tool_focus || echo '    [warning] Qwen focus patch skipped; the reliability repair may still work.'
+    install_seamless_mcp_context install || echo '    [warning] Seamless MCP patch skipped; inspect source compatibility.'
     agent_reliability install || return $?
     if grep -Fq 'ZARZYSSEUS_COMPACT_BROWSER_FALLBACK_V4' "$PROJECT_DIR/src/agent_loop.py" 2>/dev/null; then
         echo '    [ready] V3 underlying recovery retained under V4/V5'
@@ -17968,6 +17990,7 @@ case "$ACTION" in
     agent-tool-focus-install)
         application_installed || { echo "ERROR: Install Odysseus first."; exit 1; }
         install_qwen_tool_focus
+        install_seamless_mcp_context install || exit 2
         if service_installed && service_systemctl is-active --quiet "$service_unit" 2>/dev/null; then
             service_systemctl restart "$service_unit"
             echo 'Zarzysseus restarted with Qwen tool focus.'
@@ -18443,6 +18466,13 @@ PY_STATUS
     mcp-setup)
         if ! application_installed; then install_odysseus; else mcp_setup; fi
         ;;
+    mcp-seamless-install)
+        application_installed || { echo 'ERROR: Install Odysseus first.'; exit 2; }
+        install_seamless_mcp_context install
+        ;;
+    mcp-seamless-status)
+        install_seamless_mcp_context status
+        ;;
     mcp-health)
         mcp_health
         ;;
@@ -18608,6 +18638,8 @@ Usage:
   $0 agent-repair        Install V2-V8 browser routing, approval continuation and recovery; restart managed Odysseus
   $0 agent-smoke         Exercise safe web-routing helper with mock offered tool schemas
   $0 agent-rollback      Restore original upstream agent loop if unchanged since repair
+  $0 mcp-seamless-install  Install natural-language MCP routing and contextual tool selection
+  $0 mcp-seamless-status   Report MCP contextual routing patch state
   $0 mcp-setup           Repair MCP, cache browser support, sync FreeMCP, provision declared skill MCPs, and tool-call recovery
   $0 mcp-health          Inspect MCP SDK, built-ins, browser MCP cache, configured servers, FreeMCP, and routing guard
   $0 freemcp-setup       Sync/update the public registry used by freemcp.space
