@@ -19,6 +19,7 @@ import tempfile
 
 MARKER = "# ZARZYSSEUS_SEAMLESS_MCP_V1"
 CONTEXT_MARKER = "# ZARZYSSEUS_CONTEXT_CONTINUITY_V2"
+DOMAIN_MARKER = "# ZARZYSSEUS_MCP_BARE_DOMAIN_V3"
 HELPER_ANCHOR = "    def _filter_route_tool_schemas(schemas):\n"
 RELEVANCE_ANCHOR = '        route_relevant_tools = route_state["relevant_tools"]\n'
 LEGACY_ANCHOR = (
@@ -30,7 +31,7 @@ QWEN_ANCHOR = '                _zar_text = _last_user or ""\n'
 # Match natural task descriptions, not magic /skill names.
 DOMAINS = {
     "browser": (
-        r"https?://|www\.|\b(?:browser|website|webpage|navigate|screenshot|"
+        r"https?://|www\.|(?<![\w@])(?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|ai|edu|gov|co|info|app|me|xyz|uk|eg)(?=[/:?#\s]|$)|\b(?:browser|website|webpage|navigate|screenshot|"
         r"open (?:the |a )?site|click (?:on |the )?(?:link|button)|visit (?:the |a )?site)\b",
         ("browser", "playwright", "chromium"),
     ),
@@ -370,9 +371,52 @@ def strip_legacy_v1(source: str) -> str:
     return source
 
 
-def patch_source(source: str) -> str:
-    if CONTEXT_MARKER in source:
+
+def upgrade_v2_browser_domain(source: str) -> str:
+    """Guarded V2->V3 change. No policy, tool-call or user-message changes.
+
+    Browser tool discovery previously required https://, www., or the literal
+    word "browser". An explicit public bare hostname such as example.com was
+    missed, causing small models to narrate instead of being offered tools.
+    """
+    if DOMAIN_MARKER in source:
         return source
+    if source.count(CONTEXT_MARKER) != 1:
+        raise ValueError("Expected one V2 context marker before browser-domain upgrade")
+    original = (
+        '            "browser": (r"https?://|www\\.|\\b(?:browser|website|'
+        'webpage|navigate|screenshot|open (?:the |a )?site|click (?:on |the )?'
+        '(?:link|button)|visit (?:the |a )?site)\\b", '
+        '("browser","playwright","chromium")),'
+    )
+    revised = (
+        '            "browser": (r"https?://|www\\.|'
+        '(?<![\\w@])(?:[a-z0-9-]+\\.)+'
+        '(?:com|org|net|io|dev|ai|edu|gov|co|info|app|me|xyz|uk|eg)'
+        '(?=[/:?#\\s]|$)|'
+        '\\b(?:browser|website|webpage|navigate|screenshot|open (?:the |a )?site|'
+        'click (?:on |the )?(?:link|button)|visit (?:the |a )?site)\\b", '
+        '("browser","playwright","chromium")),'
+    )
+    if source.count(original) != 1:
+        raise ValueError(
+            "V2 browser hostname matcher was changed; refusing to overwrite "
+            "unknown MCP routing code. No file modified."
+        )
+    marker_line = '    ' + CONTEXT_MARKER + '\n'
+    if source.count(marker_line) != 1:
+        raise ValueError("V2 context marker is not uniquely located within agent")
+    updated = source.replace(original, revised, 1)
+    updated = updated.replace(marker_line, marker_line + '    ' + DOMAIN_MARKER + '\n', 1)
+    ast.parse(updated)
+    return updated
+
+
+def patch_source(source: str) -> str:
+    if DOMAIN_MARKER in source:
+        return source
+    if CONTEXT_MARKER in source:
+        return upgrade_v2_browser_domain(source)
     if MARKER in source:
         source = strip_legacy_v1(source)
     anchors = {
@@ -534,7 +578,7 @@ def patch_source(source: str) -> str:
 '''
         updated = updated.replace(QWEN_ANCHOR, QWEN_ANCHOR + qwen_context, 1)
     ast.parse(updated)
-    return updated
+    return upgrade_v2_browser_domain(updated)
 
 
 def install(path: Path) -> int:
@@ -542,8 +586,8 @@ def install(path: Path) -> int:
         print("ERROR: Expected an existing regular Odysseus src/agent_loop.py", file=sys.stderr)
         return 2
     before = path.read_text(encoding="utf-8")
-    if CONTEXT_MARKER in before:
-        print("[ready] Seamless MCP routing and context continuity V2 installed")
+    if DOMAIN_MARKER in before:
+        print("[ready] Seamless MCP routing, context continuity and bare-domain V3 installed")
         return 0
     try:
         after = patch_source(before)
@@ -616,11 +660,12 @@ def main() -> int:
         diagnose_source(data)
         return 0
     if args.action == "status":
-        version = ("context-v2" if CONTEXT_MARKER in data else
+        version = ("bare-domain-v3" if DOMAIN_MARKER in data else
+                   "context-v2 (upgrade available)" if CONTEXT_MARKER in data else
                    "legacy-v1 (migration needed)" if MARKER in data else
                    "not installed")
         print("Seamless MCP:", version)
-        return 0 if CONTEXT_MARKER in data else 1
+        return 0 if DOMAIN_MARKER in data else 1
     if args.action == "dry-run":
         try:
             patch_source(data)
