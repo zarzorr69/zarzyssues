@@ -18,6 +18,7 @@ import sys
 import tempfile
 
 MARKER = "# ZARZYSSEUS_SEAMLESS_MCP_V1"
+CONTEXT_MARKER = "# ZARZYSSEUS_CONTEXT_CONTINUITY_V2"
 HELPER_ANCHOR = "    def _filter_route_tool_schemas(schemas):\n"
 RELEVANCE_ANCHOR = '        route_relevant_tools = route_state["relevant_tools"]\n'
 LEGACY_ANCHOR = (
@@ -171,6 +172,7 @@ def select_mcp_schemas(latest: str, messages: object, offered: object, cap: int 
 # Installed as a nested helper so it needs no import path inside the container.
 RUNTIME_HELPER = '''
     # ZARZYSSEUS_SEAMLESS_MCP_V1
+    # ZARZYSSEUS_CONTEXT_CONTINUITY_V2
     def _zar_seamless_user_context(text, recent_messages):
         import re as _re
         _current = str(text or "")[:1400].strip()
@@ -272,7 +274,13 @@ RUNTIME_HELPER = '''
 
 def patch_source(source: str) -> str:
     if MARKER in source:
-        return source
+        if CONTEXT_MARKER in source:
+            return source
+        raise ValueError(
+            "Earlier Seamless MCP V1 is already installed, without Context V2. "
+            "Do not silently skip the upgrade or overwrite runtime V8 changes. "
+            "Use the read-only 'diagnose' action before a guarded migration."
+        )
     anchors = {
         "route helper": HELPER_ANCHOR,
         "shared API/MCP relevance selection": RELEVANCE_ANCHOR,
@@ -446,8 +454,8 @@ def install(path: Path) -> int:
         print("ERROR: Expected an existing regular Odysseus src/agent_loop.py", file=sys.stderr)
         return 2
     before = path.read_text(encoding="utf-8")
-    if MARKER in before:
-        print("[ready] Seamless MCP routing already installed")
+    if CONTEXT_MARKER in before:
+        print("[ready] Seamless MCP routing and context continuity V2 installed")
         return 0
     try:
         after = patch_source(before)
@@ -520,8 +528,11 @@ def main() -> int:
         diagnose_source(data)
         return 0
     if args.action == "status":
-        print("Seamless MCP:", "installed" if MARKER in data else "not installed")
-        return int(MARKER not in data)
+        version = ("context-v2" if CONTEXT_MARKER in data else
+                   "legacy-v1 (migration needed)" if MARKER in data else
+                   "not installed")
+        print("Seamless MCP:", version)
+        return 0 if CONTEXT_MARKER in data else 1
     if args.action == "dry-run":
         try:
             patch_source(data)
