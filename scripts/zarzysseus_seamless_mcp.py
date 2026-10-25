@@ -171,24 +171,68 @@ def select_mcp_schemas(latest: str, messages: object, offered: object, cap: int 
 # Installed as a nested helper so it needs no import path inside the container.
 RUNTIME_HELPER = '''
     # ZARZYSSEUS_SEAMLESS_MCP_V1
+    def _zar_seamless_user_context(text, recent_messages):
+        import re as _re
+        _current = str(text or "")[:1400].strip()
+        if not isinstance(recent_messages, (list, tuple)):
+            return _current
+        _follow = len(_current) <= 150 and bool(_re.search(
+            r"^(?:and|also|now|then|yes|sure|go ahead|do it|continue|"
+            r"same|what about|can you|could you|screenshot|click|open|send|"
+            r"css|device|default|fine|okay|ok|that works|do that)\b",
+            _current, _re.I
+        ))
+        _negative = _re.search(r"^(?:no|stop|cancel|don't|do not|never)\b",
+                               _current, _re.I)
+        if not _follow or _negative:
+            return _current
+        _users = [
+            m["content"].strip() for m in recent_messages[-36:]
+            if isinstance(m, dict) and m.get("role") == "user"
+            and isinstance(m.get("content"), str) and m["content"].strip()
+        ]
+        if _users and _users[-1] == _current:
+            _users.pop()
+        _prior = _users[-3:]
+        if not _prior:
+            return _current
+        return ("Previous user requests:\n"
+                + "\n".join(u[-580:] for u in _prior)[-1800:]
+                + "\nCurrent request: " + _current)
+
+    def _zar_seamless_memory_names(text, recent_messages):
+        import re as _re
+        _latest = str(text or "").strip().lower()
+        if _re.search(r"^(?:no|don't|do not|never|stop|cancel)\b", _latest):
+            return set()
+        _ctx = _zar_seamless_user_context(text, recent_messages).lower()
+        _search = (
+            "last time", "previous chat", "prior chat", "past chat",
+            "earlier conversation", "other chat", "another chat",
+            "we discussed", "we talked", "we worked on", "remember when",
+            "what did we", "what did i say", "as we said before",
+            "from our chats", "continue our project", "continue the project",
+        )
+        _save = (
+            "remember this", "remember my", "remember that",
+            "save my preference", "save this preference", "keep this in mind",
+            "what do you remember", "my saved memory", "saved memories",
+            "my preference is", "i prefer", "always use",
+        )
+        _names = set()
+        if any(t in _ctx for t in _search):
+            _names.add("search_chats")
+        if any(t in _ctx for t in _save) and not any(
+                phrase in _latest for phrase in ("don't remember", "do not remember",
+                                                 "never remember", "don't save")):
+            _names.add("manage_memory")
+        return _names
+
     def _zar_seamless_mcp_tools(text, recent_messages, offered):
         import re as _re
         if not isinstance(offered, (tuple, list)) or not text:
             return []
-        _current = str(text)
-        _context = _current
-        if (len(_current.strip()) <= 150
-                and _re.search(r"^(?:and|also|now|then|yes|sure|go ahead|do it|continue|same|what about|can you|could you|screenshot|click|open|send)\\b",
-                               _current.strip(), _re.I)
-                and not _re.search(r"^(?:no|stop|cancel|don't|do not|never)\\b", _current.strip(), _re.I)
-                and isinstance(recent_messages, (list, tuple))):
-            _users = [m.get("content").strip() for m in recent_messages[-24:]
-                      if isinstance(m, dict) and m.get("role") == "user"
-                      and isinstance(m.get("content"), str) and m.get("content").strip()]
-            if len(_users) >= 2:
-                _previous = _users[-2] if _users[-1] == _current.strip() else _users[-1]
-                _context = _previous[-1100:] + "\\nFollow-up: " + _current
-        _ctx = _context.lower()
+        _ctx = _zar_seamless_user_context(text, recent_messages).lower()
         _domains = {
             "browser": (r"https?://|www\\.|\\b(?:browser|website|webpage|navigate|screenshot|open (?:the |a )?site|click (?:on |the )?(?:link|button)|visit (?:the |a )?site)\\b", ("browser","playwright","chromium")),
             "github": (r"\\b(?:github|gitlab|pull request|merge request|commit|repository|repo issue|github issue|review (?:the |a )?pr)\\b", ("github","gitlab")),
