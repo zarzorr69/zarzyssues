@@ -135,7 +135,13 @@ class SeamlessMCPTests(unittest.TestCase):
 
     def test_legacy_api_route_permissions_and_caller_scope(self):
         patched = mod.patch_source(self.legacy_agent_source())
-        scope = {"_MCP_KEYWORDS": ("mcp", "tool")}
+        scope = {
+            "_MCP_KEYWORDS": ("mcp", "tool"),
+            "FUNCTION_TOOL_SCHEMAS": [
+                schema("search_chats", "Search user's own past session transcripts"),
+                schema("manage_memory", "Manage user's saved memories"),
+            ],
+        }
         exec(compile(patched, "<legacy-agent>", "exec"), scope)
         agent = scope["agent"]
         route = {"is_api_model": True, "mcp_schemas": self.tools,
@@ -173,6 +179,26 @@ class SeamlessMCPTests(unittest.TestCase):
                 raise TypeError("unexpected policy call signature")
         self.assertEqual(agent(*args, tool_policy=BrokenPolicy()), {"web_search"})
         self.assertEqual(agent(*args, disabled_tools=1), {"web_search"})
+
+        # Cross-chat recall is a scoped read-tool *offer*, not an automatic
+        # search or a new database. Only owner-authorized dispatcher executes.
+        recall = agent([], route, "What did we discuss in our previous chat about Docker?")
+        self.assertIn("search_chats", recall)
+        self.assertNotIn("manage_memory", recall)
+        save = agent([], route, "Remember this preference for my future chats")
+        self.assertIn("manage_memory", save)
+        self.assertNotIn("search_chats", save)
+        self.assertNotIn("manage_memory", agent([], route, "My monitor is large"))
+        self.assertNotIn("search_chats", agent([], route, "Hello there"))
+        self.assertNotIn(
+            "search_chats", agent([], route, "What did we discuss in our previous chat?",
+                                  relevant_tools={"web_search"}))
+        self.assertNotIn(
+            "search_chats", agent([], route, "What did we discuss in our previous chat?",
+                                  disabled_tools={"search_chats"}))
+        self.assertNotIn(
+            "manage_memory", agent([], route, "Remember this preference",
+                                   tool_policy=Policy({"manage_memory"})))
 
         # Contextual follow-up should recover the previous user request.
         history = [
