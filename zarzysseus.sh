@@ -135,7 +135,7 @@ _zz_sync_kit() {
         return
     fi
     local -a files=(compose.yaml run.sh zarzysseus-docker.sh launch_odysseus.py \
-        zarzysseus_bridge.py zarzysseus_overlay.py container-entrypoint.sh admin_preseed.py \
+        zarzysseus_bridge.py zarzysseus_overlay.py zarzysseus_seamless_mcp.py container-entrypoint.sh admin_preseed.py \
         benchmark.py .env.example models/Modelfile.agent models/Modelfile.quality \
         models/Modelfile.moe toolkit/zarzysseus.sh compose.gpu.yaml)
     printf 'Source release: %s\nExisting kit:   %s\n' "$source" "$target"
