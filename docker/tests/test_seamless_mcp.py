@@ -250,6 +250,36 @@ class SeamlessMCPTests(unittest.TestCase):
         ast.parse(updated)
         self.assertEqual(mod.patch_source(updated), updated)
 
+        # The very first PR3 V1 version used a direct call rather than the
+        # later permission-prefilter helper. Its comments might be missing
+        # after another upstream runtime repair. Both known variants migrate.
+        missing_comments = source.replace(
+            '        # Natural-language MCP requests no longer require /skill or "use MCP".\n'
+            '        # Only schemas already offered by Odysseus are eligible.\n',
+            '',
+            1,
+        )
+        early_v1 = missing_comments.replace(
+            '                   else _zar_seamless_permitted_offerings())\n',
+            '                   else _zar_seamless_mcp_tools(_last_user, messages, route_mcp_schemas))\n',
+            1,
+        )
+        for candidate in (missing_comments, early_v1):
+            migrated = mod.patch_source(candidate)
+            ast.parse(migrated)
+            self.assertIn(mod.CONTEXT_MARKER, migrated)
+            self.assertIn('# ZARZYSSEUS_AGENT_RUNTIME_V8', migrated)
+            self.assertEqual(mod.patch_source(migrated), migrated)
+
+        # A partially replaced function body is not a known V1 release.
+        damaged = missing_comments.replace(
+            '                   else _zar_seamless_permitted_offerings())\n',
+            '                   else arbitrary_unreviewed_function())\n',
+            1,
+        )
+        with self.assertRaisesRegex(ValueError, "Could not uniquely identify"):
+            mod.patch_source(damaged)
+
     def test_qwen_focus_uses_shared_task_context(self):
         source = self.legacy_agent_source()
         source = source.replace(
