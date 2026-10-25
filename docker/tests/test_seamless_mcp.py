@@ -72,6 +72,7 @@ class SeamlessMCPTests(unittest.TestCase):
             "    def _tool_schemas_for_route(route_state):\n"
             "        schemas = []\n"
             "        route_mcp_schemas = []\n"
+            '        route_relevant_tools = route_state["relevant_tools"]\\n'
             "        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\n"
             "        schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []\n"
             "        if True:\n"
@@ -91,6 +92,7 @@ class SeamlessMCPTests(unittest.TestCase):
             "    def _tool_schemas_for_route(route_state):\n"
             "        schemas = []\n"
             "        route_mcp_schemas = []\n"
+            '        route_relevant_tools = route_state["relevant_tools"]\\n'
             "        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\n"
             "        schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []\n"
             "        if True:\n"
@@ -112,6 +114,40 @@ class SeamlessMCPTests(unittest.TestCase):
         chosen = scope["_zar_seamless_mcp_tools"]("now screenshot it", messages, self.tools)
         self.assertIn("mcp__builtin_browser__browser_take_screenshot", self.names(chosen))
         self.assertNotIn("mcp__builtin_browser__browser_run_code_unsafe", self.names(chosen))
+
+    def test_older_api_route_enriches_only_when_not_caller_scoped(self):
+        # A minimal older Odysseus API path: no legacy email alias API anchor.
+        source = (
+            "def agent(messages, route_state, _last_user, turn_contract=None, "
+            "_caller_relevant_tools=None, guide_only=False):\\n"
+            "    def _filter_route_tool_schemas(schemas):\\n"
+            "        return schemas\\n"
+            "    def _tool_schemas_for_route(route_state):\\n"
+            '        route_mcp_schemas = route_state["mcp_schemas"]\\n'
+            '        route_relevant_tools = route_state["relevant_tools"]\\n'
+            "        result = route_relevant_tools\\n"
+            "        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\\n"
+            "        schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []\\n"
+            "        return route_relevant_tools\\n"
+            "    return _tool_schemas_for_route(route_state)\\n"
+        )
+        patched = mod.patch_source(source)
+        self.assertIn("ZARZYSSEUS_SEAMLESS_MCP_RELEVANCE_V1", patched)
+        ast.parse(patched)
+        scope = {"_MCP_KEYWORDS": ("mcp", "tool")}
+        exec(compile(patched, "<old-agent>", "exec"), scope)
+        route = {"is_api_model": True, "mcp_schemas": self.tools,
+                 "relevant_tools": {"web_search"}}
+        args = ([], route, "Create a GitHub issue for this crash")
+        result = scope["agent"](*args)
+        self.assertIn("mcp__GitHub__create_issue", result)
+        self.assertIn("web_search", result)
+        constrained = scope["agent"](*args, _caller_relevant_tools={"web_search"})
+        self.assertEqual(constrained, {"web_search"})
+        blocked = scope["agent"](*args, turn_contract=object())
+        self.assertEqual(blocked, {"web_search"})
+        no_api = scope["agent"]([], {**route, "is_api_model": False}, args[2])
+        self.assertEqual(no_api, {"web_search"})
 
     def test_unknown_upstream_layout_fails_closed(self):
         with self.assertRaises(ValueError):
