@@ -276,13 +276,21 @@ def patch_source(source: str) -> str:
                     return []
                 if not callable(getattr(tool_policy, "blocks", None)):
                     return []  # unknown policy object: fail closed
+            if not isinstance(disabled_tools, (set, frozenset, list, tuple, dict)):
+                return []  # Unknown disabled-list structure: do not auto-offer.
             _zar_offered = []
             for _zar_schema in route_mcp_schemas:
+                if not isinstance(_zar_schema, dict):
+                    continue
                 _zar_name = str((_zar_schema.get("function") or {}).get("name") or "")
                 if not _zar_name or _zar_name in disabled_tools:
                     continue
-                if tool_policy is not None and tool_policy.blocks(_zar_name):
-                    continue
+                if tool_policy is not None:
+                    try:
+                        if tool_policy.blocks(_zar_name):
+                            continue
+                    except (TypeError, ValueError, AttributeError):
+                        return []  # Unrecognized policy contract: fail closed.
                 _zar_offered.append(_zar_schema)
             return _zar_seamless_mcp_tools(_last_user, messages, _zar_offered)
 
