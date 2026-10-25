@@ -307,19 +307,52 @@ def strip_legacy_v1(source: str) -> str:
         raise ValueError("V1 relevance block is not recognizable")
     source = source[:i] + source[j:]
 
-    legacy_note = "        # Natural-language MCP requests no longer require /skill or \"use MCP\".\n"
-    legacy_end = "        return _filter_route_tool_schemas(schemas)\n"
-    if source.count(legacy_note) != 1:
-        raise ValueError("V1 legacy MCP fallback was modified; refusing migration")
-    i = source.index(legacy_note)
-    j = source.find(legacy_end, i)
-    if j < 0 or j - i > 850:
-        raise ValueError("V1 legacy MCP fallback does not match original scope")
-    block = source[i:j]
-    if ("wants_mcp =" not in block or "route_mcp_schemas" not in block
-            or "_zar_seamless_" not in block):
-        raise ValueError("V1 legacy fallback was modified")
-    source = source[:i] + LEGACY_ANCHOR + source[j:]
+    # V1 shipped in more than one exact form: the first release inserted
+    # _zar_seamless_mcp_tools(...); later releases used the prefiltered
+    # _zar_seamless_permitted_offerings(). Its explanatory comment may have
+    # been removed by subsequent upstream agent repairs. Match a KNOWN
+    # executable sequence, rather than requiring the comment to survive.
+    legacy_note = '        # Natural-language MCP requests no longer require /skill or "use MCP".\n'
+    legacy_note2 = '        # Only schemas already offered by Odysseus are eligible.\n'
+    legacy_return = '        return _filter_route_tool_schemas(schemas)\n'
+    old_call = '        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\n'
+    variants = (
+        old_call
+        + '        schemas = (route_mcp_schemas if wants_mcp and route_mcp_schemas\n'
+        + '                   else _zar_seamless_permitted_offerings())\n',
+        old_call
+        + '        schemas = (route_mcp_schemas if wants_mcp and route_mcp_schemas\n'
+        + '                   else _zar_seamless_mcp_tools(_last_user, messages, route_mcp_schemas))\n',
+        LEGACY_ANCHOR,
+    )
+    matches = [
+        (variant, source.find(variant))
+        for variant in variants if source.count(variant) == 1
+    ]
+    if len(matches) != 1:
+        # Print narrowly scoped source structure, never user conversation data.
+        ix = source.find('        wants_mcp =')
+        preview = source[ix:ix + 520] if ix >= 0 else "(wants_mcp absent)"
+        raise ValueError(
+            "Could not uniquely identify the V1 legacy MCP fallback; "
+            "no file changed. Nearby code:\n" + preview
+        )
+    variant, i = matches[0]
+    # Optional exact V1 comments immediately preceding the known call.
+    start = i
+    if source[:start].endswith(legacy_note + legacy_note2):
+        start -= len(legacy_note + legacy_note2)
+    elif source[:start].endswith(legacy_note2):
+        start -= len(legacy_note2)
+    elif source[:start].endswith(legacy_note):
+        start -= len(legacy_note)
+    j = i + len(variant)
+    if source[j:j + len(legacy_return)] != legacy_return:
+        raise ValueError(
+            "V1 legacy fallback has unexpected intervening code; "
+            "refusing migration to preserve existing tool guards."
+        )
+    source = source[:start] + LEGACY_ANCHOR + source[j:]
 
     # Earlier patch also enriched Qwen's _zar_text on follow-up requests.
     # Remove only the recognizable V1 block to avoid duplicate context text.
