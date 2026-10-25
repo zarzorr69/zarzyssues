@@ -83,6 +83,36 @@ class SeamlessMCPTests(unittest.TestCase):
         self.assertIn(mod.MARKER, patched)
         self.assertEqual(mod.patch_source(patched), patched)
 
+    def test_runtime_injected_selector_handles_followups(self):
+        source = (
+            "def agent(messages):\\n"
+            "    def _filter_route_tool_schemas(schemas):\\n"
+            "        return schemas\\n"
+            "    def _tool_schemas_for_route(route_state):\\n"
+            "        schemas = []\\n"
+            "        route_mcp_schemas = []\\n"
+            "        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\\n"
+            "        schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []\\n"
+            "        if True:\\n"
+            "            schemas = _drop_legacy_email_alias_schemas_when_mcp_available(schemas)\\n"
+            "        return schemas\\n"
+        )
+        patched = mod.patch_source(source)
+        outer = ast.parse(patched).body[0]
+        helper = next(n for n in outer.body if isinstance(n, ast.FunctionDef)
+                      and n.name == "_zar_seamless_mcp_tools")
+        module = ast.fix_missing_locations(ast.Module(body=[helper], type_ignores=[]))
+        scope = {}
+        exec(compile(module, "<runtime-helper>", "exec"), scope)
+        messages = [
+            {"role": "user", "content": "Open https://example.org"},
+            {"role": "assistant", "content": "Navigation succeeded"},
+            {"role": "user", "content": "now screenshot it"},
+        ]
+        chosen = scope["_zar_seamless_mcp_tools"]("now screenshot it", messages, self.tools)
+        self.assertIn("mcp__builtin_browser__browser_take_screenshot", self.names(chosen))
+        self.assertNotIn("mcp__builtin_browser__browser_run_code_unsafe", self.names(chosen))
+
     def test_unknown_upstream_layout_fails_closed(self):
         with self.assertRaises(ValueError):
             mod.patch_source("def main(): pass\n")
