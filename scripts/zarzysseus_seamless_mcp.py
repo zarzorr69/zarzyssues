@@ -19,7 +19,7 @@ import tempfile
 
 MARKER = "# ZARZYSSEUS_SEAMLESS_MCP_V1"
 HELPER_ANCHOR = "    def _filter_route_tool_schemas(schemas):\n"
-API_ANCHOR = "            schemas = _drop_legacy_email_alias_schemas_when_mcp_available(schemas)\n"
+RELEVANCE_ANCHOR = '        route_relevant_tools = route_state["relevant_tools"]\n'
 LEGACY_ANCHOR = (
     "        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\n"
     "        schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []\n"
@@ -191,7 +191,7 @@ def patch_source(source: str) -> str:
         return source
     anchors = {
         "route helper": HELPER_ANCHOR,
-        "API model MCP filter": API_ANCHOR,
+        "shared API/MCP relevance selection": RELEVANCE_ANCHOR,
         "legacy MCP fallback": LEGACY_ANCHOR,
     }
     mismatches = [
@@ -218,18 +218,23 @@ def patch_source(source: str) -> str:
             + ("\nNearby routing code:\n" + "\n".join(samples) if samples else "")
         )
     updated = source.replace(HELPER_ANCHOR, RUNTIME_HELPER + "\n" + HELPER_ANCHOR, 1)
-    api_extra = '''            # Semantic MCP discovery only when there is no caller/contract tool
-            # restriction. Existing disabled-tool and approval filters still apply.
-            if (route_mcp_schemas and turn_contract is None
-                    and _caller_relevant_tools is None and not guide_only):
-                _zar_auto = _zar_seamless_mcp_tools(_last_user, messages, route_mcp_schemas)
-                _zar_names = {(s.get("function") or {}).get("name") for s in schemas}
-                schemas.extend(
-                    s for s in _zar_auto
-                    if (s.get("function") or {}).get("name") not in _zar_names
-                )
+    # Enrich the existing relevance set BEFORE Odysseus decides which API
+    # schemas it will offer. This preserves its own disabled-tool, tool-surface,
+    # caller-scope and approval filters, rather than appending after filtering.
+    relevance_extra = '''        # ZARZYSSEUS_SEAMLESS_MCP_RELEVANCE_V1
+        # Discover only already-enabled MCP schemas from the active route.
+        # No auto-grant when a caller or turn contract has selected a tool scope.
+        if (route_state.get("is_api_model") and route_mcp_schemas
+                and not guide_only and turn_contract is None
+                and _caller_relevant_tools is None):
+            _zar_found = _zar_seamless_mcp_tools(_last_user, messages, route_mcp_schemas)
+            if _zar_found and route_relevant_tools is not None:
+                route_relevant_tools = set(route_relevant_tools) | {
+                    str((s.get("function") or {}).get("name") or "")
+                    for s in _zar_found
+                }
 '''
-    updated = updated.replace(API_ANCHOR, api_extra + API_ANCHOR, 1)
+    updated = updated.replace(RELEVANCE_ANCHOR, RELEVANCE_ANCHOR + relevance_extra, 1)
     legacy = '''        # Natural-language MCP requests no longer require /skill or "use MCP".
         # Only schemas already offered by Odysseus are eligible.
         wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)
