@@ -272,15 +272,76 @@ RUNTIME_HELPER = '''
 '''
 
 
+
+def strip_legacy_v1(source: str) -> str:
+    """Uninstall only this patch's known V1 inserts in-memory for rebase.
+
+    Never modifies files. Preserve every unrelated Odysseus/Zarzysseus V8 line
+    and abort rather than guessing if a V1 block has been edited unpredictably.
+    """
+    if MARKER not in source or CONTEXT_MARKER in source:
+        raise ValueError("Expected V1-only source for guarded context migration")
+    helper_start = "    # ZARZYSSEUS_SEAMLESS_MCP_V1\n"
+    helper_end = HELPER_ANCHOR
+    if source.count(helper_start) != 1 or source.count(helper_end) != 1:
+        raise ValueError("V1 helper insertion is not unique; refusing migration")
+    i = source.index(helper_start)
+    j = source.index(helper_end, i)
+    helper = source[i:j]
+    if (j - i > 9000 or "def _zar_seamless_mcp_tools" not in helper
+            or "def _zar_seamless_permitted_offerings" in helper):
+        raise ValueError("V1 helper has an unrecognized layout")
+    source = source[:i] + source[j:]
+
+    relevance = "        # ZARZYSSEUS_SEAMLESS_MCP_RELEVANCE_V1\n"
+    tail = "        if _force_answer:\n"
+    if source.count(relevance) != 1:
+        raise ValueError("Missing or duplicate V1 relevance insertion")
+    i = source.index(relevance)
+    j = source.find(tail, i)
+    if j < 0 or j - i > 9500:
+        raise ValueError("V1 relevance does not end at the expected agent guard")
+    block = source[i:j]
+    if ("def _zar_seamless_permitted_offerings" not in block
+            or "route_relevant_tools" not in block):
+        raise ValueError("V1 relevance block is not recognizable")
+    source = source[:i] + source[j:]
+
+    legacy_note = "        # Natural-language MCP requests no longer require /skill or \"use MCP\".\n"
+    legacy_end = "        return _filter_route_tool_schemas(schemas)\n"
+    if source.count(legacy_note) != 1:
+        raise ValueError("V1 legacy MCP fallback was modified; refusing migration")
+    i = source.index(legacy_note)
+    j = source.find(legacy_end, i)
+    if j < 0 or j - i > 850:
+        raise ValueError("V1 legacy MCP fallback does not match original scope")
+    block = source[i:j]
+    if ("wants_mcp =" not in block or "route_mcp_schemas" not in block
+            or "_zar_seamless_" not in block):
+        raise ValueError("V1 legacy fallback was modified")
+    source = source[:i] + LEGACY_ANCHOR + source[j:]
+
+    # Earlier patch also enriched Qwen's _zar_text on follow-up requests.
+    # Remove only the recognizable V1 block to avoid duplicate context text.
+    qwen = '                if (len(_zar_text.strip()) <= 150 and\n'
+    if qwen in source:
+        if source.count(qwen) != 1:
+            raise ValueError("Multiple V1 Qwen follow-up fragments")
+        i = source.index(qwen)
+        terminator = '_zar_text = _zar_prior[-1100:] + "\\n" + _zar_text\n'
+        j = source.find(terminator, i)
+        if j < 0 or j - i > 2400 or "_zar_history =" not in source[i:j]:
+            raise ValueError("V1 Qwen follow-up fragment differs; refusing migration")
+        source = source[:i] + source[j+len(terminator):]
+    ast.parse(source)
+    return source
+
+
 def patch_source(source: str) -> str:
+    if CONTEXT_MARKER in source:
+        return source
     if MARKER in source:
-        if CONTEXT_MARKER in source:
-            return source
-        raise ValueError(
-            "Earlier Seamless MCP V1 is already installed, without Context V2. "
-            "Do not silently skip the upgrade or overwrite runtime V8 changes. "
-            "Use the read-only 'diagnose' action before a guarded migration."
-        )
+        source = strip_legacy_v1(source)
     anchors = {
         "route helper": HELPER_ANCHOR,
         "shared API/MCP relevance selection": RELEVANCE_ANCHOR,
