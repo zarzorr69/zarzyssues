@@ -173,7 +173,7 @@ function zarzysseus {
 New-Item -ItemType Directory -Force (Split-Path -Parent $PROFILE) | Out-Null
 if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE | Out-Null }
 if (!(Select-String -Path $PROFILE -SimpleMatch -Quiet '# ZARZYSSEUS_WINDOWS_AUTO_LAUNCH_V1')) {
-    Add-Content -Path $PROFILE -Value ("\n" + $snippet)
+    Add-Content -Path $PROFILE -Value ([Environment]::NewLine + $snippet)
 }
 . $PROFILE
 zarzysseus
