@@ -250,6 +250,32 @@ class SeamlessMCPTests(unittest.TestCase):
         ast.parse(updated)
         self.assertEqual(mod.patch_source(updated), updated)
 
+    def test_qwen_focus_uses_shared_task_context(self):
+        source = self.legacy_agent_source()
+        source = source.replace(
+            '        route_mcp_schemas = route_state["mcp_schemas"]\n',
+            '        # ZARZYSSEUS_QWEN_EXPLICIT_TOOL_FOCUS_V4\n'
+            '                _zar_text = _last_user or ""\n'
+            '        route_mcp_schemas = route_state["mcp_schemas"]\n',
+            1,
+        )
+        # This specific synthetic placement intentionally breaks Python
+        # indentation; use a valid fixture in the route function instead.
+        source = source.replace(
+            '                _zar_text = _last_user or ""\n',
+            '        if True:\n'
+            '            if True:\n'
+            '                _zar_text = _last_user or ""\n',
+            1,
+        )
+        patched = mod.patch_source(source)
+        self.assertIn("ZARZYSSEUS_QWEN_CONTEXT_CONTINUITY_V2", patched)
+        self.assertIn(
+            "_zar_text = _zar_seamless_user_context(_zar_text, messages)",
+            patched,
+        )
+        ast.parse(patched)
+
     def test_unknown_modified_v1_migration_fails_closed(self):
         source = self.legacy_agent_source().replace(
             mod.HELPER_ANCHOR,
