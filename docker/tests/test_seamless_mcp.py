@@ -210,6 +210,51 @@ class SeamlessMCPTests(unittest.TestCase):
         self.assertIn("mcp__builtin_browser__browser_take_screenshot", result)
         self.assertNotIn("mcp__builtin_browser__browser_run_code_unsafe", result)
 
+    def test_safe_v1_to_v2_source_migration_preserves_other_patches(self):
+        source = self.legacy_agent_source() + '# ZARZYSSEUS_AGENT_RUNTIME_V8\n'
+        source = source.replace(
+            mod.HELPER_ANCHOR,
+            '    # ZARZYSSEUS_SEAMLESS_MCP_V1\n'
+            '    def _zar_seamless_mcp_tools(text, recent_messages, offered):\n'
+            '        return []\n\n' + mod.HELPER_ANCHOR, 1,
+        )
+        source = source.replace(
+            mod.RELEVANCE_ANCHOR,
+            mod.RELEVANCE_ANCHOR
+            + '        # ZARZYSSEUS_SEAMLESS_MCP_RELEVANCE_V1\n'
+            + '        def _zar_seamless_permitted_offerings():\n'
+            + '            return []\n'
+            + '        route_relevant_tools = set(route_relevant_tools)\n'
+            + '        if _force_answer:\n'
+            + '            return []\n',
+            1,
+        )
+        old_legacy = (
+            '        # Natural-language MCP requests no longer require /skill or "use MCP".\n'
+            '        # Only schemas already offered by Odysseus are eligible.\n'
+            '        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\n'
+            '        schemas = (route_mcp_schemas if wants_mcp and route_mcp_schemas\n'
+            '                   else _zar_seamless_permitted_offerings())\n'
+        )
+        source = source.replace(mod.LEGACY_ANCHOR, old_legacy, 1)
+        self.assertNotIn(mod.CONTEXT_MARKER, source)
+        updated = mod.patch_source(source)
+        self.assertIn(mod.CONTEXT_MARKER, updated)
+        self.assertIn('# ZARZYSSEUS_AGENT_RUNTIME_V8', updated)
+        ast.parse(updated)
+        self.assertEqual(mod.patch_source(updated), updated)
+
+    def test_unknown_modified_v1_migration_fails_closed(self):
+        source = self.legacy_agent_source().replace(
+            mod.HELPER_ANCHOR,
+            '    # ZARZYSSEUS_SEAMLESS_MCP_V1\n'
+            '    def arbitrary_unrecognized_method():\n'
+            '        pass\n' + mod.HELPER_ANCHOR,
+            1,
+        )
+        with self.assertRaisesRegex(ValueError, 'unrecognized layout'):
+            mod.patch_source(source)
+
     def test_missing_legacy_caller_scope_fails_closed(self):
         source = self.legacy_agent_source().replace("relevant_tools=None, ", "unsupported=None, ", 1)
         with self.assertRaisesRegex(ValueError, "relevant_tools"):
