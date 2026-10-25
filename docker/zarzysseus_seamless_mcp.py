@@ -217,30 +217,77 @@ def patch_source(source: str) -> str:
             "no file changed. " + "; ".join(mismatches)
             + ("\nNearby routing code:\n" + "\n".join(samples) if samples else "")
         )
-    required_guards = ("turn_contract", "_caller_relevant_tools", "guide_only")
+    # Legacy agent routing has no turn_contract/_caller_relevant_tools.
+    # The explicit caller scope is the existing relevant_tools parameter.
+    # We must see policy, disabled and caller-request controls before injecting.
+    required_guards = (
+        "relevant_tools", "forced_tools", "guide_only", "_force_answer",
+        "tool_policy", "disabled_tools",
+    )
     missing_guards = [
         name for name in required_guards
         if not re.search(r"\b" + re.escape(name) + r"\b", source)
     ]
     if missing_guards:
         raise ValueError(
-            "This Odysseus version is missing caller-scope guard(s): "
+            "Legacy Odysseus is missing required caller/permission controls: "
             + ", ".join(missing_guards)
-            + ". Refusing to widen MCP tool visibility before locating the "
-              "equivalent authorization checks; no file changed. "
-              "Run the read-only 'diagnose' action to inspect routing context."
+            + ". No file changed. Run 'diagnose' for the routing layout."
+        )
+    # The named route must live inside a function with an explicit relevant_tools
+    # argument. A coincidental string elsewhere does not satisfy authorization.
+    tree = ast.parse(source)
+    route_functions = [
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "_tool_schemas_for_route"
+    ]
+    if len(route_functions) != 1:
+        raise ValueError("Unable to locate one scoped API tool router; no file changed.")
+    enclosing = None
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if route_functions[0] in node.body:
+            enclosing = node
+            break
+    if enclosing is None or "relevant_tools" not in {
+        a.arg for a in (enclosing.args.posonlyargs + enclosing.args.args
+                        + enclosing.args.kwonlyargs)
+    }:
+        raise ValueError(
+            "Legacy caller scope is not a relevant_tools argument of the agent. "
+            "Do not assume an implicit permission fallback; no file changed."
         )
     updated = source.replace(HELPER_ANCHOR, RUNTIME_HELPER + "\n" + HELPER_ANCHOR, 1)
     # Enrich the existing relevance set BEFORE Odysseus decides which API
     # schemas it will offer. This preserves its own disabled-tool, tool-surface,
     # caller-scope and approval filters, rather than appending after filtering.
     relevance_extra = '''        # ZARZYSSEUS_SEAMLESS_MCP_RELEVANCE_V1
-        # Discover only already-enabled MCP schemas from the active route.
-        # No auto-grant when a caller or turn contract has selected a tool scope.
-        if (route_state.get("is_api_model") and route_mcp_schemas
-                and not guide_only and turn_contract is None
-                and _caller_relevant_tools is None):
-            _zar_found = _zar_seamless_mcp_tools(_last_user, messages, route_mcp_schemas)
+        # Legacy scope is the ORIGINAL relevant_tools argument (caller-supplied),
+        # never the RAG-inferred route_relevant_tools collection. Do not broaden
+        # explicit caller scopes, forced tools, guide-only or force-answer turns.
+        def _zar_seamless_permitted_offerings():
+            if (guide_only or _force_answer or relevant_tools is not None
+                    or forced_tools):
+                return []
+            if tool_policy is not None:
+                if getattr(tool_policy, "block_all_tool_calls", True):
+                    return []
+                if not callable(getattr(tool_policy, "blocks", None)):
+                    return []  # unknown policy object: fail closed
+            _zar_offered = []
+            for _zar_schema in route_mcp_schemas:
+                _zar_name = str((_zar_schema.get("function") or {}).get("name") or "")
+                if not _zar_name or _zar_name in disabled_tools:
+                    continue
+                if tool_policy is not None and tool_policy.blocks(_zar_name):
+                    continue
+                _zar_offered.append(_zar_schema)
+            return _zar_seamless_mcp_tools(_last_user, messages, _zar_offered)
+
+        if route_state.get("is_api_model") and route_mcp_schemas:
+            _zar_found = _zar_seamless_permitted_offerings()
             if _zar_found and route_relevant_tools is not None:
                 route_relevant_tools = set(route_relevant_tools) | {
                     str((s.get("function") or {}).get("name") or "")
@@ -248,16 +295,15 @@ def patch_source(source: str) -> str:
                 }
 '''
     updated = updated.replace(RELEVANCE_ANCHOR, RELEVANCE_ANCHOR + relevance_extra, 1)
-    legacy = '''        # Natural-language MCP requests no longer require /skill or "use MCP".
-        # Only schemas already offered by Odysseus are eligible.
+    legacy = '''        # Only select permitted, ENABLED MCP schemas for natural-language
+        # requests in non-API routes; existing literal MCP handling is unchanged.
         wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)
         schemas = (route_mcp_schemas if wants_mcp and route_mcp_schemas
-                   else _zar_seamless_mcp_tools(_last_user, messages, route_mcp_schemas))
+                   else _zar_seamless_permitted_offerings())
 '''
     updated = updated.replace(LEGACY_ANCHOR, legacy, 1)
     if "# ZARZYSSEUS_QWEN_EXPLICIT_TOOL_FOCUS_V4" in source and QWEN_ANCHOR in updated:
-        # Qwen's existing browser filter works on _zar_text. Short follow-ups
-        # need the previous browser request, but must not change actual messages.
+        # Preserve previous USER message only as tool-selection context.
         context = '''                if (len(_zar_text.strip()) <= 150 and
                         _zar_re.search(r"^(?:and|also|now|then|yes|go ahead|do it|continue|screenshot|click|open)\\b",
                                        _zar_text.strip(), _zar_re.I)):
