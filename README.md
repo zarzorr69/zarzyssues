@@ -97,6 +97,90 @@ bash "$HOME/.local/share/zarzysseus/zarzysseus.sh"
 
 This uses the repository's current `main` branch. Read the [installation and safety notes](#linux-installation) if you prefer to inspect the files first or already have a customized copy. **Termux itself is not a supported Linux installation target**; run Zarzysseus on an actual Linux machine or server.
 
+### 🔄 Optional: type `zarzysseus` anywhere (Bash, Zsh, Fish, PowerShell)
+
+The startup commands above remain unchanged. **Automatic launcher registration is opt-in**: Zarzysseus does not modify your shell profile just because you downloaded it or opened the TUI. If you enable this option, each `zarzysseus` invocation checks the latest GitHub `main` version before launching, with a working offline fallback. No models, user data, or Docker volumes are deleted or moved.
+
+#### Linux — Bash, Zsh, Fish, and other shells that can run Bash
+
+Run **once** in your existing Linux terminal. It creates a dedicated managed checkout and a `~/.local/bin/zarzysseus` command **only when that command path is unused**. Nothing is added to your shell startup file by this shared step:
+
+```bash
+bash -c '
+set -e
+root="$HOME/.local/share/zarzysseus"
+mkdir -p "$root" "$HOME/.local/bin"
+if [ ! -d "$root/repo/.git" ]; then
+    git clone --depth 1 --single-branch --branch main https://github.com/zarzorr69/zarzyssues.git "$root/repo"
+fi
+bash -n "$root/repo/scripts/zarzysseus-auto-update.sh"
+install -m 755 "$root/repo/scripts/zarzysseus-auto-update.sh" "$root/auto-update.sh"
+link="$HOME/.local/bin/zarzysseus"
+if [ ! -e "$link" ] && [ ! -L "$link" ]; then
+    ln -s "$root/auto-update.sh" "$link"
+elif [ "$(readlink "$link" 2>/dev/null || :)" != "$root/auto-update.sh" ]; then
+    echo "Existing launcher at $link was preserved; inspect it before replacing." >&2
+    exit 1
+fi
+echo "Optional updater ready at $link"
+'
+```
+
+For **Bash or Zsh**, make sure `~/.local/bin` is on your `PATH`. To enable it in the current session use `export PATH="$HOME/.local/bin:$PATH"`; add that line to `~/.bashrc` or `~/.zshrc` if needed to make it persistent. From any directory, type `zarzysseus`.
+
+For **Fish**, the easiest option is to also install the supplied persistent Fish function (especially if you previously defined a `zarzysseus` function):
+
+```fish
+bash "$HOME/.local/share/zarzysseus/repo/scripts/install-fish-launcher.sh"
+source "$HOME/.config/fish/functions/zarzysseus.fish"
+zarzysseus
+```
+
+The Fish installer backs up an earlier `zarzysseus.fish` file if it needs to replace it. Both Linux launch methods run the same updater. `zarzysseus --update-only` checks without opening the TUI; `zarzysseus install-all-fixes` invokes the optional repair workflow. Updates use a **fast-forward-only** Git checkout, run `bash -n` before replacing the active installer, and keep a timestamped backup. Offline or unsuccessful updates leave the last validated installer usable.
+
+#### Windows — optional PowerShell command
+
+Windows users can opt in to a persistent `zarzysseus` PowerShell function. This uses **the Windows `zarzysseus.ps1` launcher**, not the Linux Bash script. Paste the following **once** into Windows PowerShell. The function checks GitHub on each launch, validates the downloaded PowerShell syntax, keeps a backup when it changes, and uses the last working file if offline:
+
+```powershell
+$snippet = @'
+# ZARZYSSEUS_WINDOWS_AUTO_LAUNCH_V1
+function zarzysseus {
+    $dir = Join-Path $env:LOCALAPPDATA 'Zarzysseus'
+    $file = Join-Path $dir 'zarzysseus.ps1'
+    $temp = Join-Path $dir ("zarzysseus." + [guid]::NewGuid().ToString("N") + ".tmp.ps1")
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    try {
+        Invoke-WebRequest -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop -Uri 'https://raw.githubusercontent.com/zarzorr69/zarzyssues/main/zarzysseus.ps1' -OutFile $temp
+        $tokens = $null; $parseErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($temp, [ref]$tokens, [ref]$parseErrors) | Out-Null
+        if ($parseErrors.Count) { throw 'Downloaded PowerShell script failed syntax validation.' }
+        if (!(Test-Path $file) -or (Get-FileHash $file).Hash -ne (Get-FileHash $temp).Hash) {
+            if (Test-Path $file) {
+                Copy-Item $file ($file + '.before-autoupdate-' + (Get-Date -Format yyyyMMdd-HHmmss)) -ErrorAction Stop
+            }
+            Move-Item -Force $temp $file
+        }
+    } catch {
+        Write-Warning "Zarzysseus update unavailable; trying local installer: $_"
+    } finally {
+        Remove-Item -Force $temp -ErrorAction SilentlyContinue
+    }
+    if (!(Test-Path $file)) { throw 'No working Zarzysseus launcher is available.' }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $file @args
+}
+'@
+New-Item -ItemType Directory -Force (Split-Path -Parent $PROFILE) | Out-Null
+if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE | Out-Null }
+if (!(Select-String -Path $PROFILE -SimpleMatch -Quiet '# ZARZYSSEUS_WINDOWS_AUTO_LAUNCH_V1')) {
+    Add-Content -Path $PROFILE -Value ("\n" + $snippet)
+}
+. $PROFILE
+zarzysseus
+```
+
+To stop automatic checks, remove the optional `zarzysseus` function from your PowerShell profile or remove the optional Linux launcher/function. **The original curl one-liners still work without opting in.** Windows PowerShell and native Linux are different launchers; Docker stack/kit upgrades remain separate, explicit actions rather than silent container recreation.
+
 ### 🐳 Docker quick start: Linux and ZimaOS
 
 These commands download the **whole project** (the launcher **and** the `docker/` files), select **Docker mode**, and open the interactive menu. They **do not** install containers, pull models, or restart an existing stack. Choose **CPU-only** for a server without a dedicated GPU; use **Full** only where the additional runtimes are supported.
