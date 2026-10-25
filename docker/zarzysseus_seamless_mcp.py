@@ -183,11 +183,6 @@ RUNTIME_HELPER = '''
         _ranked.sort(key=lambda row: (row[0], row[1]))
         return [schema for _, _, schema in _ranked[:12]]
 
-    def _zar_seamless_context(text, recent_messages):
-        # Return context solely for existing Qwen schema focus; not a new user message.
-        _selected = _zar_seamless_mcp_tools(text, recent_messages, [])
-        # The separate context recovery is handled in the schema helper.
-        return text
 '''
 
 
