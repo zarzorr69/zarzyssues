@@ -155,6 +155,40 @@ class SeamlessMCPTests(unittest.TestCase):
         no_api = scope["agent"]([], {**route, "is_api_model": False}, args[2])
         self.assertEqual(no_api, {"web_search"})
 
+    def test_missing_older_scope_guard_identified(self):
+        # Anchor-compatible older source without the modern caller guards.
+        source = (
+            "def agent(messages):\n"
+            "    def _filter_route_tool_schemas(schemas):\n"
+            "        return schemas\n"
+            "    def _tool_schemas_for_route(route_state):\n"
+            '        route_mcp_schemas = route_state["mcp_schemas"]\n'
+            '        route_relevant_tools = route_state["relevant_tools"]\n'
+            "        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\n"
+            "        schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []\n"
+            "        return schemas\n"
+        )
+        with self.assertRaisesRegex(ValueError, "turn_contract"):
+            mod.patch_source(source)
+
+    def test_read_only_diagnosis_reports_guard_presence(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        source = (
+            "def agent(messages):\n"
+            "    def _filter_route_tool_schemas(schemas):\n"
+            "        return schemas\n"
+            "    def _tool_schemas_for_route(route_state):\n"
+            '        route_relevant_tools = route_state["relevant_tools"]\n'
+            "        return route_relevant_tools\n"
+        )
+        output = StringIO()
+        with redirect_stdout(output):
+            mod.diagnose_source(source)
+        self.assertIn("turn_contract: 0 occurrence(s)", output.getvalue())
+        self.assertIn("def _tool_schemas_for_route", output.getvalue())
+        self.assertIn("No files modified", output.getvalue())
+
     def test_unknown_upstream_layout_fails_closed(self):
         with self.assertRaises(ValueError):
             mod.patch_source("def main(): pass\n")
