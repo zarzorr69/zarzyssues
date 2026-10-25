@@ -217,7 +217,6 @@ RUNTIME_HELPER = '''
             "remember this", "remember my", "remember that",
             "save my preference", "save this preference", "keep this in mind",
             "what do you remember", "my saved memory", "saved memories",
-            "my preference is", "i prefer", "always use",
         )
         _names = set()
         if any(t in _ctx for t in _search):
@@ -386,6 +385,36 @@ def patch_source(source: str) -> str:
                     str((s.get("function") or {}).get("name") or "")
                     for s in _zar_found
                 }
+        # Existing Odysseus tools, NOT a new cross-user memory store.
+        # When requested, surface read-only past-chat retrieval or user-authored
+        # durable-memory management. Merely offering a schema does not execute.
+        if (route_state.get("is_api_model") and route_relevant_tools is not None
+                and not guide_only and not _force_answer
+                and relevant_tools is None and not forced_tools
+                and isinstance(disabled_tools, (set, frozenset, list, tuple, dict))):
+            _zar_recall_names = _zar_seamless_memory_names(_last_user, messages)
+            if _zar_recall_names:
+                _zar_native_offered = {
+                    str((s.get("function") or {}).get("name") or "")
+                    for s in FUNCTION_TOOL_SCHEMAS if isinstance(s, dict)
+                }
+                _zar_recall_allowed = set()
+                for _zar_name in _zar_recall_names & _zar_native_offered:
+                    if _zar_name in disabled_tools:
+                        continue
+                    if tool_policy is not None:
+                        if getattr(tool_policy, "block_all_tool_calls", True):
+                            continue
+                        if not callable(getattr(tool_policy, "blocks", None)):
+                            continue
+                        try:
+                            if tool_policy.blocks(_zar_name):
+                                continue
+                        except (TypeError, ValueError, AttributeError):
+                            continue
+                    _zar_recall_allowed.add(_zar_name)
+                if _zar_recall_allowed:
+                    route_relevant_tools = set(route_relevant_tools) | _zar_recall_allowed
 '''
     updated = updated.replace(RELEVANCE_ANCHOR, RELEVANCE_ANCHOR + relevance_extra, 1)
     legacy = '''        # Only select permitted, ENABLED MCP schemas for natural-language
