@@ -73,7 +73,7 @@ def contextual_request(latest: str, messages: object) -> str:
     current = str(latest or "")[:1400]
     followup = bool(FOLLOWUP.search(current.strip())) or bool(re.match(
         r"^(?:css|device|default|fine|okay|ok|yes|yep|sure|same|"
-        r"do that|that works|sounds good|go ahead)\\b",
+        r"do that|that works|sounds good|go ahead)\b",
         current.strip(), re.I,
     ))
     if (len(current.strip()) > 150 or not followup
@@ -101,21 +101,21 @@ def relevant_memory_tools(latest: str, messages: object) -> set[str]:
         return set()
     tools = set()
     if re.search(
-        r"\\b(?:last time|previous chats?|prior chats?|past chats?|"
+        r"\b(?:last time|previous chats?|prior chats?|past chats?|"
         r"earlier conversation|we (?:discussed|talked about|worked on)|"
         r"from (?:our|my) (?:chats?|conversation)|"
         r"what (?:did|have) (?:i|we) (?:say|do|discuss)|"
         r"as (?:we|i) (?:said|discussed) before|"
         r"continue (?:our|the) (?:project|work)|"
-        r"what (?:do|did) you remember about)\\b",
+        r"what (?:do|did) you remember about)\b",
         text,
     ):
         tools.add("search_chats")
     if re.search(
-        r"\\b(?:remember (?:this|that|my|our)|save (?:this|that|my) (?:fact|preference|memory)|"
+        r"\b(?:remember (?:this|that|my|our)|save (?:this|that|my) (?:fact|preference|memory)|"
         r"what do you remember|my saved memor(?:y|ies)|"
         r"from (?:your|saved) memor(?:y|ies)|"
-        r"keep (?:this|that) in mind)\\b",
+        r"keep (?:this|that) in mind)\b",
         text,
     ):
         tools.add("manage_memory")
