@@ -199,9 +199,23 @@ def patch_source(source: str) -> str:
         for label, anchor in anchors.items() if source.count(anchor) != 1
     ]
     if mismatches:
+        # Reveal only the routing-code anchor lines, not unrelated source/data.
+        samples = []
+        needles = (
+            "def _filter_route_tool_schemas",
+            "_drop_legacy_email_alias_schemas_when_mcp_available",
+            "wants_mcp",
+            "schemas = route_mcp_schemas",
+        )
+        for number, line in enumerate(source.splitlines(), 1):
+            if any(needle in line for needle in needles):
+                samples.append(f"line {number}: {line.strip()[:170]}")
+            if len(samples) >= 12:
+                break
         raise ValueError(
             "Installed Odysseus source differs from the tested routing layout; "
             "no file changed. " + "; ".join(mismatches)
+            + ("\\nNearby routing code:\\n" + "\\n".join(samples) if samples else "")
         )
     updated = source.replace(HELPER_ANCHOR, RUNTIME_HELPER + "\n" + HELPER_ANCHOR, 1)
     api_extra = '''            # Semantic MCP discovery only when there is no caller/contract tool
