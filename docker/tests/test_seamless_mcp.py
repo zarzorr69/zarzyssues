@@ -64,48 +64,32 @@ class SeamlessMCPTests(unittest.TestCase):
         ]
         self.assertEqual(mod.select_mcp_schemas("No, don't", messages, self.tools), [])
 
-    def test_patch_idempotent_and_compilable(self):
-        source = (
-            "def agent(messages):\n"
-            "    turn_contract = None\n"
-            "    _caller_relevant_tools = None\n"
-            "    guide_only = False\n"
+    @staticmethod
+    def legacy_agent_source():
+        return (
+            "def agent(messages, route_state, _last_user, relevant_tools=None, "
+            "forced_tools=None, guide_only=False, _force_answer=False, "
+            "tool_policy=None, disabled_tools=None):\n"
+            "    disabled_tools = disabled_tools or set()\n"
             "    def _filter_route_tool_schemas(schemas):\n"
             "        return schemas\n"
             "    def _tool_schemas_for_route(route_state):\n"
-            "        schemas = []\n"
-            "        route_mcp_schemas = []\n"
+            '        route_mcp_schemas = route_state["mcp_schemas"]\n'
             '        route_relevant_tools = route_state["relevant_tools"]\n'
             "        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\n"
             "        schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []\n"
-            "        if True:\n"
-            "            schemas = _drop_legacy_email_alias_schemas_when_mcp_available(schemas)\n"
-            "        return schemas\n"
+            "        return route_relevant_tools\n"
+            "    return _tool_schemas_for_route(route_state)\n"
         )
-        patched = mod.patch_source(source)
+
+    def test_patch_idempotent_and_compilable(self):
+        patched = mod.patch_source(self.legacy_agent_source())
         ast.parse(patched)
         self.assertIn(mod.MARKER, patched)
         self.assertEqual(mod.patch_source(patched), patched)
 
     def test_runtime_injected_selector_handles_followups(self):
-        source = (
-            "def agent(messages):\n"
-            "    turn_contract = None\n"
-            "    _caller_relevant_tools = None\n"
-            "    guide_only = False\n"
-            "    def _filter_route_tool_schemas(schemas):\n"
-            "        return schemas\n"
-            "    def _tool_schemas_for_route(route_state):\n"
-            "        schemas = []\n"
-            "        route_mcp_schemas = []\n"
-            '        route_relevant_tools = route_state["relevant_tools"]\n'
-            "        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\n"
-            "        schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []\n"
-            "        if True:\n"
-            "            schemas = _drop_legacy_email_alias_schemas_when_mcp_available(schemas)\n"
-            "        return schemas\n"
-        )
-        patched = mod.patch_source(source)
+        patched = mod.patch_source(self.legacy_agent_source())
         outer = ast.parse(patched).body[0]
         helper = next(n for n in outer.body if isinstance(n, ast.FunctionDef)
                       and n.name == "_zar_seamless_mcp_tools")
@@ -121,54 +105,53 @@ class SeamlessMCPTests(unittest.TestCase):
         self.assertIn("mcp__builtin_browser__browser_take_screenshot", self.names(chosen))
         self.assertNotIn("mcp__builtin_browser__browser_run_code_unsafe", self.names(chosen))
 
-    def test_older_api_route_enriches_only_when_not_caller_scoped(self):
-        # A minimal older Odysseus API path: no legacy email alias API anchor.
-        source = (
-            "def agent(messages, route_state, _last_user, turn_contract=None, "
-            "_caller_relevant_tools=None, guide_only=False):\n"
-            "    def _filter_route_tool_schemas(schemas):\n"
-            "        return schemas\n"
-            "    def _tool_schemas_for_route(route_state):\n"
-            '        route_mcp_schemas = route_state["mcp_schemas"]\n'
-            '        route_relevant_tools = route_state["relevant_tools"]\n'
-            "        result = route_relevant_tools\n"
-            "        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\n"
-            "        schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []\n"
-            "        return route_relevant_tools\n"
-            "    return _tool_schemas_for_route(route_state)\n"
-        )
-        patched = mod.patch_source(source)
-        self.assertIn("ZARZYSSEUS_SEAMLESS_MCP_RELEVANCE_V1", patched)
-        ast.parse(patched)
+    def test_legacy_api_route_permissions_and_caller_scope(self):
+        patched = mod.patch_source(self.legacy_agent_source())
         scope = {"_MCP_KEYWORDS": ("mcp", "tool")}
-        exec(compile(patched, "<old-agent>", "exec"), scope)
+        exec(compile(patched, "<legacy-agent>", "exec"), scope)
+        agent = scope["agent"]
         route = {"is_api_model": True, "mcp_schemas": self.tools,
                  "relevant_tools": {"web_search"}}
         args = ([], route, "Create a GitHub issue for this crash")
-        result = scope["agent"](*args)
-        self.assertIn("mcp__GitHub__create_issue", result)
-        self.assertIn("web_search", result)
-        constrained = scope["agent"](*args, _caller_relevant_tools={"web_search"})
-        self.assertEqual(constrained, {"web_search"})
-        blocked = scope["agent"](*args, turn_contract=object())
-        self.assertEqual(blocked, {"web_search"})
-        no_api = scope["agent"]([], {**route, "is_api_model": False}, args[2])
-        self.assertEqual(no_api, {"web_search"})
+        enabled = agent(*args)
+        self.assertIn("mcp__GitHub__create_issue", enabled)
+        self.assertIn("web_search", enabled)
 
-    def test_missing_older_scope_guard_identified(self):
-        # Anchor-compatible older source without the modern caller guards.
-        source = (
-            "def agent(messages):\n"
-            "    def _filter_route_tool_schemas(schemas):\n"
-            "        return schemas\n"
-            "    def _tool_schemas_for_route(route_state):\n"
-            '        route_mcp_schemas = route_state["mcp_schemas"]\n'
-            '        route_relevant_tools = route_state["relevant_tools"]\n'
-            "        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\n"
-            "        schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []\n"
-            "        return schemas\n"
-        )
-        with self.assertRaisesRegex(ValueError, "turn_contract"):
+        # When a caller explicitly chooses its tool surface, do not widen.
+        self.assertEqual(agent(*args, relevant_tools={"web_search"}), {"web_search"})
+        self.assertEqual(agent(*args, relevant_tools=set()), {"web_search"})
+        self.assertEqual(agent(*args, forced_tools=["web_search"]), {"web_search"})
+        self.assertEqual(agent(*args, guide_only=True), {"web_search"})
+        self.assertEqual(agent(*args, _force_answer=True), {"web_search"})
+        self.assertEqual(agent([], {**route, "is_api_model": False}, args[2]), {"web_search"})
+
+        # Missing/unknown policy implementation and explicitly denied tools
+        # must never be silently bypassed.
+        self.assertEqual(agent(*args, tool_policy=object()), {"web_search"})
+        class Policy:
+            block_all_tool_calls = False
+            def __init__(self, blocked=()):
+                self.blocked = blocked
+            def blocks(self, name):
+                return name in self.blocked
+        self.assertEqual(agent(*args, tool_policy=Policy({"mcp__GitHub__create_issue"}))
+                         .intersection({"mcp__GitHub__create_issue"}), set())
+        self.assertEqual(agent(*args, disabled_tools={"mcp__GitHub__create_issue"})
+                         .intersection({"mcp__GitHub__create_issue"}), set())
+
+        # Contextual follow-up should recover the previous user request.
+        history = [
+            {"role": "user", "content": "Open https://example.org in browser"},
+            {"role": "assistant", "content": "Opened the page"},
+            {"role": "user", "content": "now screenshot it"},
+        ]
+        result = agent(history, route, "now screenshot it")
+        self.assertIn("mcp__builtin_browser__browser_take_screenshot", result)
+        self.assertNotIn("mcp__builtin_browser__browser_run_code_unsafe", result)
+
+    def test_missing_legacy_caller_scope_fails_closed(self):
+        source = self.legacy_agent_source().replace("relevant_tools=None, ", "unsupported=None, ", 1)
+        with self.assertRaisesRegex(ValueError, "relevant_tools"):
             mod.patch_source(source)
 
     def test_read_only_diagnosis_reports_guard_presence(self):
