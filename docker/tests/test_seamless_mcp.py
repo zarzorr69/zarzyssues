@@ -70,6 +70,44 @@ class SeamlessMCPTests(unittest.TestCase):
             "Never remember or save this", []))
         self.assertEqual(mod.relevant_memory_tools("Hello", []), set())
 
+    def test_bare_public_hostname_triggers_browser_discovery(self):
+        # The regression in the user's latest chat: they omitted https://.
+        schemas = mod.select_mcp_schemas("Open example.com and describe it", [], self.tools)
+        self.assertIn("mcp__builtin_browser__browser_navigate", self.names(schemas))
+        self.assertNotIn("mcp__builtin_browser__browser_run_code_unsafe", self.names(schemas))
+
+    def test_guarded_v2_to_v3_bare_domain_migration(self):
+        v3 = mod.patch_source(self.legacy_agent_source())
+        self.assertIn(mod.DOMAIN_MARKER, v3)
+        self.assertEqual(mod.patch_source(v3), v3)
+        addition = (
+            r"(?<![\w@])(?:[a-z0-9-]+\.)+"
+            r"(?:com|org|net|io|dev|ai|edu|gov|co|info|app|me|xyz|uk|eg)"
+            r"(?=[/:?#\s]|$)|"
+        )
+        self.assertEqual(v3.count(addition), 1)
+        v2 = v3.replace("    " + mod.DOMAIN_MARKER + "\n", "", 1)
+        v2 = v2.replace(addition, "", 1)
+        self.assertIn(mod.CONTEXT_MARKER, v2)
+        self.assertNotIn(mod.DOMAIN_MARKER, v2)
+        upgraded = mod.patch_source(v2)
+        self.assertEqual(upgraded, v3)
+        self.assertEqual(mod.patch_source(upgraded), upgraded)
+        self.assertIn("ZARZYSSEUS_CONTEXT_CONTINUITY_V2", upgraded)
+
+    def test_modified_v2_browser_route_fails_closed(self):
+        v3 = mod.patch_source(self.legacy_agent_source())
+        addition = (
+            r"(?<![\w@])(?:[a-z0-9-]+\.)+"
+            r"(?:com|org|net|io|dev|ai|edu|gov|co|info|app|me|xyz|uk|eg)"
+            r"(?=[/:?#\s]|$)|"
+        )
+        v2 = v3.replace("    " + mod.DOMAIN_MARKER + "\n", "", 1)
+        v2 = v2.replace(addition, "", 1)
+        modified = v2.replace("https?://|www\\.", "https?://|www\\.example", 1)
+        with self.assertRaisesRegex(ValueError, "browser hostname matcher was changed"):
+            mod.patch_source(modified)
+
     def test_no_spurious_tool_on_plain_chat(self):
         self.assertEqual(mod.select_mcp_schemas("Hello, how are you?", [], self.tools), [])
 
