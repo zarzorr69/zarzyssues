@@ -138,6 +138,13 @@ class SeamlessMCPTests(unittest.TestCase):
                          .intersection({"mcp__GitHub__create_issue"}), set())
         self.assertEqual(agent(*args, disabled_tools={"mcp__GitHub__create_issue"})
                          .intersection({"mcp__GitHub__create_issue"}), set())
+        # Unknown policy contracts or malformed disabled collections fail closed.
+        class BrokenPolicy:
+            block_all_tool_calls = False
+            def blocks(self, name):
+                raise TypeError("unexpected policy call signature")
+        self.assertEqual(agent(*args, tool_policy=BrokenPolicy()), {"web_search"})
+        self.assertEqual(agent(*args, disabled_tools=1), {"web_search"})
 
         # Contextual follow-up should recover the previous user request.
         history = [
