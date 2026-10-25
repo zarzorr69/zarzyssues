@@ -64,21 +64,62 @@ WORD = re.compile(r"[a-z0-9]+")
 
 
 def contextual_request(latest: str, messages: object) -> str:
+    """Small, user-only conversation window for *tool relevance*, not authorization.
+
+    A brief continuation can refer to several prior turns ("open URL" ->
+    "screenshot it" -> "CSS is fine"). Never concatenate assistant responses
+    or untrusted tool/page text into the user's authorization.
+    """
     current = str(latest or "")[:1400]
-    if (len(current.strip()) > 150 or not FOLLOWUP.search(current.strip())
+    followup = bool(FOLLOWUP.search(current.strip())) or bool(re.match(
+        r"^(?:css|device|default|fine|okay|ok|yes|yep|sure|same|"
+        r"do that|that works|sounds good|go ahead)\\b",
+        current.strip(), re.I,
+    ))
+    if (len(current.strip()) > 150 or not followup
             or NEGATE.search(current.strip()) or not isinstance(messages, (list, tuple))):
         return current
-    previous = []
-    for message in messages[-24:]:
-        if isinstance(message, dict) and message.get("role") == "user":
-            content = message.get("content")
-            if isinstance(content, str) and content.strip():
-                previous.append(content.strip())
-    if len(previous) < 2:
+    previous = [
+        m["content"].strip() for m in messages[-36:]
+        if isinstance(m, dict) and m.get("role") == "user"
+        and isinstance(m.get("content"), str) and m["content"].strip()
+    ]
+    if previous and previous[-1] == current.strip():
+        previous.pop()
+    # Three prior user turns, capped to 1800 characters. Do not carry stale
+    # instructions from an unrelated chat/session (messages is request-local).
+    prior = previous[-3:]
+    if not prior:
         return current
-    # Only previous USER text from this request's own message history.
-    prior = previous[-2] if previous[-1] == current.strip() else previous[-1]
-    return prior[-1100:] + "\nFollow-up: " + current
+    return "Previous user requests:\n" + "\n".join(x[-580:] for x in prior)[-1800:] + "\nCurrent request: " + current
+
+
+def relevant_memory_tools(latest: str, messages: object) -> set[str]:
+    """Offer built-in recall tools, never execute reads/writes or save memory."""
+    text = contextual_request(latest, messages).lower()
+    if NEGATE.search(str(latest or "")):
+        return set()
+    tools = set()
+    if re.search(
+        r"\\b(?:last time|previous chats?|prior chats?|past chats?|"
+        r"earlier conversation|we (?:discussed|talked about|worked on)|"
+        r"from (?:our|my) (?:chats?|conversation)|"
+        r"what (?:did|have) (?:i|we) (?:say|do|discuss)|"
+        r"as (?:we|i) (?:said|discussed) before|"
+        r"continue (?:our|the) (?:project|work)|"
+        r"what (?:do|did) you remember about)\\b",
+        text,
+    ):
+        tools.add("search_chats")
+    if re.search(
+        r"\\b(?:remember (?:this|that|my|our)|save (?:this|that|my) (?:fact|preference|memory)|"
+        r"what do you remember|my saved memor(?:y|ies)|"
+        r"from (?:your|saved) memor(?:y|ies)|"
+        r"keep (?:this|that) in mind)\\b",
+        text,
+    ):
+        tools.add("manage_memory")
+    return tools
 
 
 def select_mcp_schemas(latest: str, messages: object, offered: object, cap: int = 12) -> list[dict]:
