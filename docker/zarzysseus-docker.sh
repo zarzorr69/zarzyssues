@@ -342,7 +342,7 @@ docker_install_all_fixes() {
         return 2
     fi
     echo "[2/4] Container-scoped agent/continuity/tool repairs"
-    for action in agent-tool-focus-install container-agent-repair chat-continuity-fix tool-json-fix; do
+    for action in agent-tool-focus-install container-agent-repair seamless-mcp-install chat-continuity-fix tool-json-fix; do
         printf 'Repair: %s\n' "$action"
         if ! native "$action"; then
             printf '[FAIL] %s\n' "$action" >&2
@@ -366,9 +366,46 @@ docker_install_all_fixes() {
     fi
 }
 
+# Read-only: no model generation, pulls, restarts, or container recreation.
+cpu_safety_doctor() {
+    echo '=== ZARZYSSEUS ZIMAOS CPU SAFETY DOCTOR ==='
+    echo 'No inference or downloads are performed.'
+    printf 'Hardware profile: %s\n' "$profile"
+    echo '[1/4] Memory availability and pressure'
+    if [[ -r /proc/meminfo ]]; then
+        awk '/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/ {
+            printf "  %-16s %8.1f GiB\n", $1, $2 / 1048576
+        }' /proc/meminfo
+    fi
+    for file in /proc/pressure/io /proc/pressure/memory; do
+        if [[ -r "$file" ]]; then
+            printf '  %s\n' "$file"
+            grep -E '^(some|full) ' "$file" || :
+        fi
+    done
+    echo '[2/4] Compose CPU limits (only nonsecret config values)'
+    for key in MODEL_RAM_LIMIT MODEL_CPU_LIMIT MODEL_KEEP_ALIVE APP_RAM_LIMIT APP_CPU_LIMIT; do
+        printf '  %s=%s\n' "$key" "$(setting "$key")"
+    done
+    echo '  Max model count=1, parallel requests=1.'
+    echo '  30m keep-alive can retain gigabytes of RAM between requests.'
+    echo '[3/4] Compose container state'
+    dc --profile app ps --all || echo '[WARN] Compose status unavailable.'
+    echo '[4/4] Ollama metadata (8s timeout, never generate)'
+    if command -v timeout >/dev/null 2>&1; then
+        timeout -k 2s 8s "${COMPOSE[@]}" --env-file .env -f compose.yaml exec -T cpu-ollama ollama list \
+            || echo '[WARN] Ollama inventory unavailable or slow.'
+        timeout -k 2s 8s "${COMPOSE[@]}" --env-file .env -f compose.yaml exec -T cpu-ollama ollama ps \
+            || echo '[WARN] Ollama loaded-model status unavailable.'
+    else
+        echo '[SKIP] Missing timeout; avoiding an unbounded Ollama query.'
+    fi
+    echo 'Do not warm a model when memory available is low or IO full pressure is high.'
+}
+
 repair_core() {
     local action failures=0
-    for action in agent-tool-focus-install container-agent-repair chat-continuity-fix tool-json-fix; do
+    for action in agent-tool-focus-install container-agent-repair seamless-mcp-install chat-continuity-fix tool-json-fix; do
         printf '\nRepair: %s\n' "$action"
         native "$action" || failures=$((failures + 1))
     done
@@ -534,6 +571,7 @@ dispatch() {
         down) dc --profile app down ;;
         models|model-list) dc exec -T cpu-ollama ollama list ;;
         model-doctor|model-visibility) model_doctor ;;
+        cpu-doctor|cpu-safety-doctor) cpu_safety_doctor ;;
         ollama-status) dc ps cpu-ollama; dc exec -T cpu-ollama ollama ps ;;
         ollama-start) dc up -d cpu-ollama ;;
         ollama-stop) dc stop cpu-ollama ;;
@@ -556,7 +594,7 @@ dispatch() {
         gpu-readiness) readiness "${1:-http://127.0.0.1:30000}" ;;
         doctor) docker_doctor ;;
         repair) repair_core ;;
-        agent-rollback|agent-tool-focus-install|container-agent-repair|container-agent-legacy-repair|chat-continuity-fix|tool-json-fix|cookbook-fix|mcp-health|mcp-setup|skills-doctor|skills-health|skills-list|skills-manage-list|skills-permissions|skills-summary-installed|skills-summary|skills-search|skills-install|skills-update|skills-update-one|skills-remove|skills-permissions-set|skills-permissions-clear|skills-setup|skills-mcp-fix|skills-runtime-fix|skills-sync-all|install-personal-skills|model-advisor|model-advisor-json|model-advisor-pins|model-list-json|providers|ollama-sync|tool-health|agent-smoke|agent-doctor)
+        agent-rollback|agent-tool-focus-install|container-agent-repair|container-agent-legacy-repair|seamless-mcp-install|seamless-mcp-status|chat-continuity-fix|tool-json-fix|cookbook-fix|mcp-health|mcp-setup|skills-doctor|skills-health|skills-list|skills-manage-list|skills-permissions|skills-summary-installed|skills-summary|skills-search|skills-install|skills-update|skills-update-one|skills-remove|skills-permissions-set|skills-permissions-clear|skills-setup|skills-mcp-fix|skills-runtime-fix|skills-sync-all|install-personal-skills|model-advisor|model-advisor-json|model-advisor-pins|model-list-json|providers|ollama-sync|tool-health|agent-smoke|agent-doctor)
             if [[ "$action" == agent-doctor ]]; then action=container-agent-doctor; fi
             native "$action" "$@" ;;
         help) cat <<'HELP'
@@ -569,6 +607,8 @@ Navigation categories mirror the native edition; implementations run in Compose.
   model-setup quality|agent|moe  Explicit CPU model download/profile setup
   models / model-list / pull MODEL / warm / benchmark
   model-doctor             Check installed Ollama models and Odysseus container reachability (read-only)
+  cpu-doctor               Read-only memory, IO pressure, CPU limits and loaded-model status
+  seamless-mcp-install     Apply contextual MCP source patch inside the application container
   model-mount-check [quality|agent|moe]   Inspect Ollama /profiles Modelfile bind mount (read-only)
   model-mount-repair [quality|agent|moe]  Confirm REMOUNT; recreate only Ollama, keep volumes
   model-advisor / skills-doctor / skills-install NAME / skills-setup
@@ -869,13 +909,13 @@ menu() {
                 else
                     submenu 'MODEL RUNTIMES — CPU-ONLY' 'CPU Ollama readiness|ollama-status' 'List CPU Ollama models|models' 'CPU model benchmark|benchmark quality'
                 fi ;;
-            4) submenu 'MODEL MANAGER / HARDWARE FIT' 'Model visibility doctor (container + UI)|model-doctor' 'Skill-aware model advisor|model-advisor' 'Models in CPU Ollama|models' 'Benchmark quality model|benchmark quality' ;;
+            4) submenu 'MODEL MANAGER / HARDWARE FIT' 'Model visibility doctor (container + UI)|model-doctor' 'CPU resource safety doctor|cpu-doctor' 'Skill-aware model advisor|model-advisor' 'Models in CPU Ollama|models' 'Benchmark quality model|benchmark quality' ;;
             5) submenu 'OLLAMA MANAGEMENT' 'Install Qwen3.5 CPU quality profile|model-setup quality' 'Install LFM 2.6B agent profile|model-setup agent' 'Warm quality model|warm quality' 'List installed models|models' 'Diagnose Odysseus model visibility|model-doctor' 'Check Qwen Modelfile mount|model-mount-check' 'Repair Qwen Modelfile mount|model-mount-repair' 'Pull a named model|prompt:pull' 'Stop model backend|ollama-stop' ;;
             6) unsupported 'macOS MLX-LM on a Linux CPU container' || : ;;
             7) submenu 'HUGGING FACE / MODEL FILES' 'Catalog/model advisor (read only)|model-advisor' 'Why no Hugging Face chat launcher?|info:hf' ;;
             8) submenu 'SKILLS.SH / AGENT SKILLS' 'List installed skills|skills-list' 'Search skill|prompt:skills-search' 'Install selected skill|prompt:skills-install' 'Skills + MCP health|skills-doctor' 'Approve/setup dependencies|skills-setup' 'Skill model advisor|model-advisor' ;;
             9) submenu 'MCP / FREEMCP' 'MCP health|mcp-health' 'MCP setup (may download deps)|mcp-setup' 'Agent diagnostic|agent-doctor' ;;
-            10) submenu 'DIAGNOSTICS / TOOLS / ADVANCED' 'Docker + Agent + skills doctor|doctor' 'Models / Ollama reachability|model-doctor' 'Apply guarded Agent repairs|repair' 'Cookbook status|cookbook-fix status' 'Cookbook progress repair (version sensitive)|cookbook-fix progress' 'GPU runtime health|gpu-status' 'Show full help|help' ;;
+            10) submenu 'DIAGNOSTICS / TOOLS / ADVANCED' 'Docker + Agent + skills doctor|doctor' 'CPU memory / IO safety doctor (read-only)|cpu-doctor' 'Seamless MCP status|seamless-mcp-status' 'Models / Ollama reachability|model-doctor' 'Apply guarded Agent repairs|repair' 'Cookbook status|cookbook-fix status' 'Cookbook progress repair (version sensitive)|cookbook-fix progress' 'GPU runtime health|gpu-status' 'Show full help|help' ;;
             11) submenu 'NETWORK DISCOVERABILITY' 'Show address and CORS origins|network-status' 'Change LAN / Tailscale / localhost binding|network-configure' 'Apply saved network settings (recreate app)|network-apply' 'First-run admin account setup|auth-setup' ;;
             12)
                 if [[ -n "${ZARZYSSEUS_MODE_SWITCH_CMD:-}" ]]; then
