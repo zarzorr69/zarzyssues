@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feature/profile-aware-install-all-fixes
+      - fix/seamless-mcp-cpu-docker-readiness
   pull_request:
 
 permissions:
@@ -23,8 +24,11 @@ jobs:
           bash -n scripts/install-fish-launcher.sh
       - name: Python compile checks
         run: |
-          python3 -m compileall -q docker/launch_odysseus.py docker/zarzysseus_bridge.py
+          python3 -m compileall -q docker/launch_odysseus.py docker/zarzysseus_bridge.py scripts/zarzysseus_seamless_mcp.py docker/zarzysseus_seamless_mcp.py
           if [ -f docker/zarzysseus_ollama_bootstrap.py ]; then
             python3 -m py_compile docker/zarzysseus_ollama_bootstrap.py
             python3 -m unittest discover -s docker/tests -p 'test_ollama_bootstrap.py' -v
           fi
+      - name: MCP semantic routing regression tests
+        run: |
+          python3 -m unittest discover -s docker/tests -p 'test_seamless_mcp.py' -v
