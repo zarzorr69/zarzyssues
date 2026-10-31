@@ -1,0 +1,153 @@
+{
+  "checkpoint": "Zarzysseus native V4.8 2026-10-31",
+  "files": [
+    {
+      "path": "scripts/native-v48/v4.1-schema-focus/README.md",
+      "sha256": "383433e9f34c0d2d7034db6681cafa9a88771b5eae63e10d6217e3bd3117506e"
+    },
+    {
+      "path": "scripts/native-v48/v4.1-schema-focus/test_schema_focus_v4.py",
+      "sha256": "f8cfb3bcaf3c753829c176ae3dad7294eacbd5e690682252e85fd2c24f785704"
+    },
+    {
+      "path": "scripts/native-v48/v4.1-schema-focus/zarzysseus_schema_focus_v4.py",
+      "sha256": "fd3adf5121729f88cb0523943968e1e3ebf3f8b13521a6205cbd2e17694c45cf"
+    },
+    {
+      "path": "scripts/native-v48/v4.2-forced-focus/README.md",
+      "sha256": "551436623a7a08e5f90b69ecfc7a0e9bbdc0ee5245b4b63406ad9ae6bf6f7c70"
+    },
+    {
+      "path": "scripts/native-v48/v4.2-forced-focus/test_fixtures/test_schema_focus_v4.py",
+      "sha256": "f8cfb3bcaf3c753829c176ae3dad7294eacbd5e690682252e85fd2c24f785704"
+    },
+    {
+      "path": "scripts/native-v48/v4.2-forced-focus/test_fixtures/zarzysseus_schema_focus_v4.py",
+      "sha256": "fd3adf5121729f88cb0523943968e1e3ebf3f8b13521a6205cbd2e17694c45cf"
+    },
+    {
+      "path": "scripts/native-v48/v4.2-forced-focus/test_fixtures/zarzysseus_v4_route_trace.py",
+      "sha256": "4b35c19d56de1343ded13f91e173e09d58731b9d429319fb29abdcf2d43e5f71"
+    },
+    {
+      "path": "scripts/native-v48/v4.2-forced-focus/test_forced_focus_v42.py",
+      "sha256": "839ca991a04ae27e86e323657da27b3226faca6451c78d16471d7666345195b5"
+    },
+    {
+      "path": "scripts/native-v48/v4.2-forced-focus/zarzysseus_forced_focus_v42.py",
+      "sha256": "53fc9b6e78feb2f957e1b5a8c71b4cf5c25cfe05b799375da7fdc8a844827860"
+    },
+    {
+      "path": "scripts/native-v48/v4.2-route-trace/README.md",
+      "sha256": "2006e5f8bf23c6d4b8f882d8a971219746dc259313a3cb564842d9d0248a1dd5"
+    },
+    {
+      "path": "scripts/native-v48/v4.2-route-trace/test_v4_route_trace.py",
+      "sha256": "3934c6b5e1f32e4dcb6cc7f8d20bb4c3334277c135ac9ea620efbae680038ef7"
+    },
+    {
+      "path": "scripts/native-v48/v4.2-route-trace/zarzysseus_v4_route_trace.py",
+      "sha256": "4b35c19d56de1343ded13f91e173e09d58731b9d429319fb29abdcf2d43e5f71"
+    },
+    {
+      "path": "scripts/native-v48/v4.3-browser-workflow/README.md",
+      "sha256": "80dc872d07ed881365eb632b0bb4daa9736121d520481b212f462e15275d6086"
+    },
+    {
+      "path": "scripts/native-v48/v4.3-browser-workflow/fixtures/zarzysseus_forced_focus_v42.py",
+      "sha256": "53fc9b6e78feb2f957e1b5a8c71b4cf5c25cfe05b799375da7fdc8a844827860"
+    },
+    {
+      "path": "scripts/native-v48/v4.3-browser-workflow/fixtures/zarzysseus_schema_focus_v4.py",
+      "sha256": "fd3adf5121729f88cb0523943968e1e3ebf3f8b13521a6205cbd2e17694c45cf"
+    },
+    {
+      "path": "scripts/native-v48/v4.3-browser-workflow/test_browser_workflow_v43.py",
+      "sha256": "35268929f004796236084a4402261264121e499977f2f7629c695ca1cbc7f96b"
+    },
+    {
+      "path": "scripts/native-v48/v4.3-browser-workflow/zarzysseus_browser_workflow_v43.py",
+      "sha256": "795a0e5654538924ff702e91d165ec44a276df78dc88608ea39c1de485b946c2"
+    },
+    {
+      "path": "scripts/native-v48/v4.4-image-handoff/README.md",
+      "sha256": "59a6c15a9032557072277245001c7d973037bd6eb2cf16b675c56ed4ced8d071"
+    },
+    {
+      "path": "scripts/native-v48/v4.4-image-handoff/test_image_handoff_v44.py",
+      "sha256": "6bb7935eb09941a2b107257e4ccec61243bd74f1e48f976d5b55dc093564f856"
+    },
+    {
+      "path": "scripts/native-v48/v4.4-image-handoff/zarzysseus_image_handoff_v44.py",
+      "sha256": "15a80f0fa28d21e756aedb07614885cbc8a7da875f319d56551d91f3013732f3"
+    },
+    {
+      "path": "scripts/native-v48/v4.5-task-continuation/README.md",
+      "sha256": "1baf8c4b387c9f20447894dbcf3f04bb6ad216cd55115f3e089eb6b14c479e3f"
+    },
+    {
+      "path": "scripts/native-v48/v4.5-task-continuation/test_task_continuation_v45.py",
+      "sha256": "0464d1541bb94234e6f5072d50844330657c90113f9d8ada01e463288612eefa"
+    },
+    {
+      "path": "scripts/native-v48/v4.5-task-continuation/zarzysseus_task_continuation_v45.py",
+      "sha256": "243b2073066c19a2eb475d64be9fd4622c0f3f6801e2820b8a88d4730c407146"
+    },
+    {
+      "path": "scripts/native-v48/v4.6-screenshot-continuation/README.md",
+      "sha256": "a8da7c50e89719e0b5287da438096c9d9aee9fda52d93894e0342b44c8485b02"
+    },
+    {
+      "path": "scripts/native-v48/v4.6-screenshot-continuation/test_screenshot_continuation_v46.py",
+      "sha256": "b875bc884e01346bb68df97506aa191ba2e1e7859316612f94a64d7472b68fb5"
+    },
+    {
+      "path": "scripts/native-v48/v4.6-screenshot-continuation/zarzysseus_screenshot_continuation_v46.py",
+      "sha256": "f28a78f1ef576ddb9b1c89d8cf8954234ebfb06f4a97f8cdfa90c386d69ae893"
+    },
+    {
+      "path": "scripts/native-v48/v4.7.1-approval-replay/README.md",
+      "sha256": "d049800f4c37173809be987b228591860c780327394ed71e3fba0947debdc63c"
+    },
+    {
+      "path": "scripts/native-v48/v4.7.1-approval-replay/fixture_v46_helper.py",
+      "sha256": "229c0cce6d3f04988b07206a1683281bd1585307ebedd074d6ad6351682da224"
+    },
+    {
+      "path": "scripts/native-v48/v4.7.1-approval-replay/test_approved_replay_v471.py",
+      "sha256": "d0f038bb6cfd6c1932377ce066f237684f76b2bb2bab6d443f02362639876a3c"
+    },
+    {
+      "path": "scripts/native-v48/v4.7.1-approval-replay/zarzysseus_approved_replay_v471.py",
+      "sha256": "b6e281490eb4b44782b2e3b1e51fd9876076ba8845eff8727ac32cf424bf1307"
+    },
+    {
+      "path": "scripts/native-v48/v4.8-screenshot-planner/README.md",
+      "sha256": "fab17199c428b2818ea6982b1af7a78c06869fa0d434ec9d5a66bf2cc5b94e16"
+    },
+    {
+      "path": "scripts/native-v48/v4.8-screenshot-planner/fixture_pre_v48_agent.py",
+      "sha256": "51d4e18e330dc6e343c351d6545be2a91166052e6dbdd51f181e1c86f29e1b98"
+    },
+    {
+      "path": "scripts/native-v48/v4.8-screenshot-planner/test_screenshot_planner_v48.py",
+      "sha256": "f47484c3b39f580ec7e99b025a0b35beb348378bf9e81bbfa7ecf62b58583a74"
+    },
+    {
+      "path": "scripts/native-v48/v4.8-screenshot-planner/zarzysseus_screenshot_planner_v48.py",
+      "sha256": "22e426af0ca4b673d8ef2b6156d87c9ce8d8fc2c6ef6e417aa3695e36b0d3b4a"
+    },
+    {
+      "path": "scripts/native-v48/restart-guard/README.md",
+      "sha256": "ac367058e2e4c93de6ffcd62474113633dd60227ec191ff24e7019ee07f40cf9"
+    },
+    {
+      "path": "scripts/native-v48/restart-guard/test_restart_guard.py",
+      "sha256": "dfa5fe066ce3198c7812c4701a812027a5797eef574683ac86c5b3f924835f30"
+    },
+    {
+      "path": "scripts/native-v48/restart-guard/zarzysseus_restart_guard.py",
+      "sha256": "7c90c3fe3be79ca344f64fd1db25a6dcb746acd2531cdd414176c6027722346b"
+    }
+  ]
+}

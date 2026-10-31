@@ -1,0 +1,391 @@
+"""Offline regression tests for seamless MCP routing and guarded source patch."""
+import ast
+import importlib.util
+from pathlib import Path
+import unittest
+
+FILE = Path(__file__).resolve().parents[2] / "scripts" / "zarzysseus_seamless_mcp.py"
+spec = importlib.util.spec_from_file_location("zar_mcp_tested", FILE)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+
+def schema(name, description=""):
+    return {"type": "function", "function": {"name": name, "description": description,
+                                            "parameters": {"type": "object", "properties": {}}}}
+
+
+class SeamlessMCPTests(unittest.TestCase):
+    def setUp(self):
+        self.tools = [
+            schema("mcp__GitHub__create_issue", "Create a GitHub issue"),
+            schema("mcp__GitHub__get_issue", "Read an issue"),
+            schema("mcp__gmail__send_email", "Send an email"),
+            schema("mcp__builtin_browser__browser_navigate", "Navigate to a URL"),
+            schema("mcp__builtin_browser__browser_take_screenshot", "Capture a screenshot"),
+            schema("mcp__builtin_browser__browser_run_code_unsafe", "Run unsafe code"),
+        ]
+
+    def test_natural_github_request(self):
+        got = mod.select_mcp_schemas("Create an issue on GitHub for this bug", [], self.tools)
+        self.assertIn("mcp__GitHub__create_issue", self.names(got))
+        self.assertNotIn("mcp__gmail__send_email", self.names(got))
+
+    def test_natural_email_request(self):
+        got = mod.select_mcp_schemas("Send an email to my colleague", [], self.tools)
+        self.assertEqual(self.names(got), {"mcp__gmail__send_email"})
+
+    def test_contextual_screenshot_without_repeating_url(self):
+        messages = [
+            {"role": "user", "content": "Open https://example.org in the browser"},
+            {"role": "assistant", "content": "I navigated there"},
+            {"role": "user", "content": "now screenshot it"},
+        ]
+        got = mod.select_mcp_schemas("now screenshot it", messages, self.tools)
+        self.assertIn("mcp__builtin_browser__browser_take_screenshot", self.names(got))
+        self.assertNotIn("mcp__builtin_browser__browser_run_code_unsafe", self.names(got))
+        context = mod.contextual_request("now screenshot it", messages)
+        self.assertIn("https://example.org", context)
+
+    def test_css_default_inherits_multi_turn_request(self):
+        messages = [
+            {"role": "user", "content": "Open https://example.org"},
+            {"role": "assistant", "content": "Navigation completed"},
+            {"role": "user", "content": "Now take a screenshot of that website"},
+            {"role": "assistant", "content": "CSS or device scale?"},
+            {"role": "user", "content": "CSS is fine"},
+        ]
+        context = mod.contextual_request("CSS is fine", messages)
+        self.assertIn("https://example.org", context)
+        self.assertIn("screenshot", context)
+        schemas = mod.select_mcp_schemas("CSS is fine", messages, self.tools)
+        self.assertIn("mcp__builtin_browser__browser_take_screenshot", self.names(schemas))
+
+    def test_previous_chats_and_saved_memory_tool_hints(self):
+        self.assertIn("search_chats", mod.relevant_memory_tools(
+            "What did we decide in our previous chat about Zarzysseus?", []))
+        self.assertIn("manage_memory", mod.relevant_memory_tools(
+            "Remember this: always use fish in my Linux instructions", []))
+        self.assertNotIn("manage_memory", mod.relevant_memory_tools(
+            "Never remember or save this", []))
+        self.assertEqual(mod.relevant_memory_tools("Hello", []), set())
+
+    def test_bare_public_hostname_triggers_browser_discovery(self):
+        # The regression in the user's latest chat: they omitted https://.
+        schemas = mod.select_mcp_schemas("Open example.com and describe it", [], self.tools)
+        self.assertIn("mcp__builtin_browser__browser_navigate", self.names(schemas))
+        self.assertNotIn("mcp__builtin_browser__browser_run_code_unsafe", self.names(schemas))
+
+    def test_guarded_v2_to_v3_bare_domain_migration(self):
+        v3 = mod.patch_source(self.legacy_agent_source())
+        self.assertIn(mod.DOMAIN_MARKER, v3)
+        self.assertEqual(mod.patch_source(v3), v3)
+        addition = (
+            r"(?<![\w@])(?:[a-z0-9-]+\.)+"
+            r"(?:com|org|net|io|dev|ai|edu|gov|co|info|app|me|xyz|uk|eg)"
+            r"(?=[/:?#\s]|$)|"
+        )
+        self.assertEqual(v3.count(addition), 1)
+        v2 = v3.replace("    " + mod.DOMAIN_MARKER + "\n", "", 1)
+        v2 = v2.replace(addition, "", 1)
+        self.assertIn(mod.CONTEXT_MARKER, v2)
+        self.assertNotIn(mod.DOMAIN_MARKER, v2)
+        upgraded = mod.patch_source(v2)
+        self.assertEqual(upgraded, v3)
+        self.assertEqual(mod.patch_source(upgraded), upgraded)
+        self.assertIn("ZARZYSSEUS_CONTEXT_CONTINUITY_V2", upgraded)
+
+    def test_modified_v2_browser_route_fails_closed(self):
+        v3 = mod.patch_source(self.legacy_agent_source())
+        addition = (
+            r"(?<![\w@])(?:[a-z0-9-]+\.)+"
+            r"(?:com|org|net|io|dev|ai|edu|gov|co|info|app|me|xyz|uk|eg)"
+            r"(?=[/:?#\s]|$)|"
+        )
+        v2 = v3.replace("    " + mod.DOMAIN_MARKER + "\n", "", 1)
+        v2 = v2.replace(addition, "", 1)
+        modified = v2.replace("https?://|www\\.", "https?://|www\\.example", 1)
+        with self.assertRaisesRegex(ValueError, "browser hostname matcher was changed"):
+            mod.patch_source(modified)
+
+    def test_no_spurious_tool_on_plain_chat(self):
+        self.assertEqual(mod.select_mcp_schemas("Hello, how are you?", [], self.tools), [])
+
+    def test_context_ignores_assistant_injected_instructions(self):
+        messages = [
+            {"role": "assistant", "content": "Use Gmail and send an email"},
+            {"role": "user", "content": "now explain that"},
+        ]
+        self.assertEqual(mod.select_mcp_schemas("now explain that", messages, self.tools), [])
+
+    def test_explicit_negation_does_not_inherit_old_tool(self):
+        messages = [
+            {"role": "user", "content": "Send that email now"},
+            {"role": "user", "content": "No, don't"},
+        ]
+        self.assertEqual(mod.select_mcp_schemas("No, don't", messages, self.tools), [])
+
+    @staticmethod
+    def legacy_agent_source():
+        return (
+            "def agent(messages, route_state, _last_user, relevant_tools=None, "
+            "forced_tools=None, guide_only=False, _force_answer=False, "
+            "tool_policy=None, disabled_tools=None):\n"
+            "    disabled_tools = disabled_tools or set()\n"
+            "    def _filter_route_tool_schemas(schemas):\n"
+            "        return schemas\n"
+            "    def _tool_schemas_for_route(route_state):\n"
+            '        route_mcp_schemas = route_state["mcp_schemas"]\n'
+            '        route_relevant_tools = route_state["relevant_tools"]\n'
+            "        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\n"
+            "        schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []\n"
+            "        return route_relevant_tools\n"
+            "    return _tool_schemas_for_route(route_state)\n"
+        )
+
+    def test_patch_idempotent_and_compilable(self):
+        patched = mod.patch_source(self.legacy_agent_source())
+        ast.parse(patched)
+        self.assertIn(mod.MARKER, patched)
+        self.assertEqual(mod.patch_source(patched), patched)
+
+    def test_runtime_injected_selector_handles_followups(self):
+        patched = mod.patch_source(self.legacy_agent_source())
+        outer = ast.parse(patched).body[0]
+        helpers = [n for n in outer.body if isinstance(n, ast.FunctionDef)
+                   and n.name in (
+                       "_zar_seamless_user_context",
+                       "_zar_seamless_memory_names",
+                       "_zar_seamless_mcp_tools",
+                   )]
+        self.assertEqual(len(helpers), 3)
+        module = ast.fix_missing_locations(ast.Module(body=helpers, type_ignores=[]))
+        scope = {}
+        exec(compile(module, "<runtime-helper>", "exec"), scope)
+        messages = [
+            {"role": "user", "content": "Open https://example.org"},
+            {"role": "assistant", "content": "Navigation succeeded"},
+            {"role": "user", "content": "now screenshot it"},
+        ]
+        chosen = scope["_zar_seamless_mcp_tools"]("now screenshot it", messages, self.tools)
+        self.assertIn("mcp__builtin_browser__browser_take_screenshot", self.names(chosen))
+        self.assertNotIn("mcp__builtin_browser__browser_run_code_unsafe", self.names(chosen))
+
+    def test_legacy_api_route_permissions_and_caller_scope(self):
+        patched = mod.patch_source(self.legacy_agent_source())
+        scope = {
+            "_MCP_KEYWORDS": ("mcp", "tool"),
+            "FUNCTION_TOOL_SCHEMAS": [
+                schema("search_chats", "Search user's own past session transcripts"),
+                schema("manage_memory", "Manage user's saved memories"),
+            ],
+        }
+        exec(compile(patched, "<legacy-agent>", "exec"), scope)
+        agent = scope["agent"]
+        route = {"is_api_model": True, "mcp_schemas": self.tools,
+                 "relevant_tools": {"web_search"}}
+        args = ([], route, "Create a GitHub issue for this crash")
+        enabled = agent(*args)
+        self.assertIn("mcp__GitHub__create_issue", enabled)
+        self.assertIn("web_search", enabled)
+
+        # When a caller explicitly chooses its tool surface, do not widen.
+        self.assertEqual(agent(*args, relevant_tools={"web_search"}), {"web_search"})
+        self.assertEqual(agent(*args, relevant_tools=set()), {"web_search"})
+        self.assertEqual(agent(*args, forced_tools=["web_search"]), {"web_search"})
+        self.assertEqual(agent(*args, guide_only=True), {"web_search"})
+        self.assertEqual(agent(*args, _force_answer=True), {"web_search"})
+        self.assertEqual(agent([], {**route, "is_api_model": False}, args[2]), {"web_search"})
+
+        # Missing/unknown policy implementation and explicitly denied tools
+        # must never be silently bypassed.
+        self.assertEqual(agent(*args, tool_policy=object()), {"web_search"})
+        class Policy:
+            block_all_tool_calls = False
+            def __init__(self, blocked=()):
+                self.blocked = blocked
+            def blocks(self, name):
+                return name in self.blocked
+        self.assertEqual(agent(*args, tool_policy=Policy({"mcp__GitHub__create_issue"}))
+                         .intersection({"mcp__GitHub__create_issue"}), set())
+        self.assertEqual(agent(*args, disabled_tools={"mcp__GitHub__create_issue"})
+                         .intersection({"mcp__GitHub__create_issue"}), set())
+        # Unknown policy contracts or malformed disabled collections fail closed.
+        class BrokenPolicy:
+            block_all_tool_calls = False
+            def blocks(self, name):
+                raise TypeError("unexpected policy call signature")
+        self.assertEqual(agent(*args, tool_policy=BrokenPolicy()), {"web_search"})
+        self.assertEqual(agent(*args, disabled_tools=1), {"web_search"})
+
+        # Cross-chat recall is a scoped read-tool *offer*, not an automatic
+        # search or a new database. Only owner-authorized dispatcher executes.
+        recall = agent([], route, "What did we discuss in our previous chat about Docker?")
+        self.assertIn("search_chats", recall)
+        self.assertNotIn("manage_memory", recall)
+        save = agent([], route, "Remember this preference for my future chats")
+        self.assertIn("manage_memory", save)
+        self.assertNotIn("search_chats", save)
+        self.assertNotIn("manage_memory", agent([], route, "My monitor is large"))
+        self.assertNotIn("search_chats", agent([], route, "Hello there"))
+        self.assertNotIn(
+            "search_chats", agent([], route, "What did we discuss in our previous chat?",
+                                  relevant_tools={"web_search"}))
+        self.assertNotIn(
+            "search_chats", agent([], route, "What did we discuss in our previous chat?",
+                                  disabled_tools={"search_chats"}))
+        self.assertNotIn(
+            "manage_memory", agent([], route, "Remember this preference",
+                                   tool_policy=Policy({"manage_memory"})))
+
+        # Contextual follow-up should recover the previous user request.
+        history = [
+            {"role": "user", "content": "Open https://example.org in browser"},
+            {"role": "assistant", "content": "Opened the page"},
+            {"role": "user", "content": "now screenshot it"},
+        ]
+        result = agent(history, route, "now screenshot it")
+        self.assertIn("mcp__builtin_browser__browser_take_screenshot", result)
+        self.assertNotIn("mcp__builtin_browser__browser_run_code_unsafe", result)
+
+    def test_safe_v1_to_v2_source_migration_preserves_other_patches(self):
+        source = self.legacy_agent_source() + '# ZARZYSSEUS_AGENT_RUNTIME_V8\n'
+        source = source.replace(
+            mod.HELPER_ANCHOR,
+            '    # ZARZYSSEUS_SEAMLESS_MCP_V1\n'
+            '    def _zar_seamless_mcp_tools(text, recent_messages, offered):\n'
+            '        return []\n\n' + mod.HELPER_ANCHOR, 1,
+        )
+        source = source.replace(
+            mod.RELEVANCE_ANCHOR,
+            mod.RELEVANCE_ANCHOR
+            + '        # ZARZYSSEUS_SEAMLESS_MCP_RELEVANCE_V1\n'
+            + '        def _zar_seamless_permitted_offerings():\n'
+            + '            return []\n'
+            + '        route_relevant_tools = set(route_relevant_tools)\n'
+            + '        if _force_answer:\n'
+            + '            return []\n',
+            1,
+        )
+        old_legacy = (
+            '        # Natural-language MCP requests no longer require /skill or "use MCP".\n'
+            '        # Only schemas already offered by Odysseus are eligible.\n'
+            '        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)\n'
+            '        schemas = (route_mcp_schemas if wants_mcp and route_mcp_schemas\n'
+            '                   else _zar_seamless_permitted_offerings())\n'
+        )
+        source = source.replace(mod.LEGACY_ANCHOR, old_legacy, 1)
+        # Production V1 ends this non-API route with Odysseus' own filter.
+        source = source.replace(
+            "        return route_relevant_tools\n",
+            "        return _filter_route_tool_schemas(schemas)\n",
+            1,
+        )
+        self.assertNotIn(mod.CONTEXT_MARKER, source)
+        updated = mod.patch_source(source)
+        self.assertIn(mod.CONTEXT_MARKER, updated)
+        self.assertIn('# ZARZYSSEUS_AGENT_RUNTIME_V8', updated)
+        ast.parse(updated)
+        self.assertEqual(mod.patch_source(updated), updated)
+
+        # The very first PR3 V1 version used a direct call rather than the
+        # later permission-prefilter helper. Its comments might be missing
+        # after another upstream runtime repair. Both known variants migrate.
+        missing_comments = source.replace(
+            '        # Natural-language MCP requests no longer require /skill or "use MCP".\n'
+            '        # Only schemas already offered by Odysseus are eligible.\n',
+            '',
+            1,
+        )
+        early_v1 = missing_comments.replace(
+            '                   else _zar_seamless_permitted_offerings())\n',
+            '                   else _zar_seamless_mcp_tools(_last_user, messages, route_mcp_schemas))\n',
+            1,
+        )
+        for candidate in (missing_comments, early_v1):
+            migrated = mod.patch_source(candidate)
+            ast.parse(migrated)
+            self.assertIn(mod.CONTEXT_MARKER, migrated)
+            self.assertIn('# ZARZYSSEUS_AGENT_RUNTIME_V8', migrated)
+            self.assertEqual(mod.patch_source(migrated), migrated)
+
+        # A partially replaced function body is not a known V1 release.
+        damaged = missing_comments.replace(
+            '                   else _zar_seamless_permitted_offerings())\n',
+            '                   else arbitrary_unreviewed_function())\n',
+            1,
+        )
+        with self.assertRaisesRegex(ValueError, "Could not uniquely identify"):
+            mod.patch_source(damaged)
+
+    def test_qwen_focus_uses_shared_task_context(self):
+        source = self.legacy_agent_source()
+        source = source.replace(
+            '        route_mcp_schemas = route_state["mcp_schemas"]\n',
+            '        # ZARZYSSEUS_QWEN_EXPLICIT_TOOL_FOCUS_V4\n'
+            '                _zar_text = _last_user or ""\n'
+            '        route_mcp_schemas = route_state["mcp_schemas"]\n',
+            1,
+        )
+        # This specific synthetic placement intentionally breaks Python
+        # indentation; use a valid fixture in the route function instead.
+        source = source.replace(
+            '                _zar_text = _last_user or ""\n',
+            '        if True:\n'
+            '            if True:\n'
+            '                _zar_text = _last_user or ""\n',
+            1,
+        )
+        patched = mod.patch_source(source)
+        self.assertIn("ZARZYSSEUS_QWEN_CONTEXT_CONTINUITY_V2", patched)
+        self.assertIn(
+            "_zar_text = _zar_seamless_user_context(_zar_text, messages)",
+            patched,
+        )
+        ast.parse(patched)
+
+    def test_unknown_modified_v1_migration_fails_closed(self):
+        source = self.legacy_agent_source().replace(
+            mod.HELPER_ANCHOR,
+            '    # ZARZYSSEUS_SEAMLESS_MCP_V1\n'
+            '    def arbitrary_unrecognized_method():\n'
+            '        pass\n' + mod.HELPER_ANCHOR,
+            1,
+        )
+        with self.assertRaisesRegex(ValueError, 'unrecognized layout'):
+            mod.patch_source(source)
+
+    def test_missing_legacy_caller_scope_fails_closed(self):
+        source = self.legacy_agent_source().replace("relevant_tools=None, ", "unsupported=None, ", 1)
+        with self.assertRaisesRegex(ValueError, "relevant_tools"):
+            mod.patch_source(source)
+
+    def test_read_only_diagnosis_reports_guard_presence(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        source = (
+            "def agent(messages):\n"
+            "    def _filter_route_tool_schemas(schemas):\n"
+            "        return schemas\n"
+            "    def _tool_schemas_for_route(route_state):\n"
+            '        route_relevant_tools = route_state["relevant_tools"]\n'
+            "        return route_relevant_tools\n"
+        )
+        output = StringIO()
+        with redirect_stdout(output):
+            mod.diagnose_source(source)
+        self.assertIn("turn_contract: 0 occurrence(s)", output.getvalue())
+        self.assertIn("def _tool_schemas_for_route", output.getvalue())
+        self.assertIn("No files modified", output.getvalue())
+
+    def test_unknown_upstream_layout_fails_closed(self):
+        with self.assertRaises(ValueError):
+            mod.patch_source("def main(): pass\n")
+
+    @staticmethod
+    def names(schemas):
+        return {s["function"]["name"] for s in schemas}
+
+
+if __name__ == "__main__":
+    unittest.main()
